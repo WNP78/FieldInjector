@@ -151,7 +151,7 @@ namespace FieldInjector
             for (int i = 0; i < injectedFields.Length; i++)
             {
                 var field = injectedFields[i];
-                Log($"Converting field {field.ManagedField} as {field}", 2);
+                Log($"[{offset}] Converting field {field.ManagedField} as {field}", 2);
 
                 var nativeField = Wrap((Il2CppFieldInfo*)(fieldsStore + numBaseFields + i));
                 field.FillFieldInfoStruct(nativeField, (Il2CppClass*)klassPtr, ref offset);
@@ -198,6 +198,7 @@ namespace FieldInjector
             var fieldPtr = Expression.Variable(typeof(IntPtr), "fieldPtr");
 
             MethodInfo getMonoObjectMethod = ((Func<IntPtr, object>)ClassInjectorBase.GetMonoObjectFromIl2CppPointer).Method;
+            MethodInfo getGCHandleMethod = ((Func<IntPtr, IntPtr>)ClassInjectorBase.GetGcHandlePtrFromIl2CppObject).Method;
 
             Expression[] setupExpressions = new Expression[]
             {
@@ -218,6 +219,7 @@ namespace FieldInjector
 
             if (debugLevel >= 3) 
             {
+                expressions = expressions.Prepend(LogExpression("GCHandle: ", Expression.Call(getGCHandleMethod, nativePtr)));
                 expressions = expressions.Prepend(LogExpression("Deserialise: ", nativePtr));
                 expressions = expressions.Append(LogExpression("Deserialise complete: ", nativePtr));
             }
@@ -238,6 +240,7 @@ namespace FieldInjector
 
             if (debugLevel >= 3)
             {
+                expressions = expressions.Prepend(LogExpression("GCHandle: ", Expression.Call(getGCHandleMethod, nativePtr)));
                 expressions = expressions.Prepend(LogExpression("Serialise: ", nativePtr));
                 expressions = expressions.Append(LogExpression("Serialise complete: ", nativePtr));
             }
@@ -461,6 +464,8 @@ namespace FieldInjector
                 var size = this.GetFieldSize(out int align);
                 offset = AlignTo(offset, align);
 
+                Msg($"Inject at {offset} for {size}, ending at {offset + size}");
+
                 infoOut.Offset = offset;
 
                 offset += size;
@@ -525,14 +530,18 @@ namespace FieldInjector
             {
                 public StructField(FieldInfo field) : base(field)
                 {
+                    if (base.targetType.IsEnum)
+                    {
+                        this._serialisedType = base.targetType.GetEnumUnderlyingType();
+                    }
+                    else
+                    {
+                        this._serialisedType = base.targetType;
+                    }
+
                     this.fieldClass = GetClassPointerForType(this.targetType);
                     this._fieldType = il2cpp_class_get_type(this.fieldClass);
                     this.tempPtr = Expression.Parameter(typeof(IntPtr), "tempStorage");
-
-                    if (this.targetType.IsEnum)
-                    {
-                        this.marshalType = this.targetType.GetEnumUnderlyingType();
-                    }
                 }
 
                 private IntPtr fieldClass;
@@ -541,9 +550,11 @@ namespace FieldInjector
 
                 private ParameterExpression tempPtr;
 
-                private Type marshalType;
+                private Type _serialisedType;
 
                 protected override IntPtr fieldType => this._fieldType;
+
+                protected override Type targetType => this._serialisedType;
 
                 public unsafe override int GetFieldSize(out int align)
                 {
@@ -551,37 +562,25 @@ namespace FieldInjector
                     return (int)(Wrap((Il2CppClass*)this.fieldClass).ActualSize - Marshal.SizeOf<Il2CppObject>());
                 }
 
-                private unsafe static IntPtr StructToHGlobal(object value, int size)
+                public unsafe static T GetValue<T>(IntPtr obj, IntPtr field) where T : unmanaged
                 {
-                    IntPtr ptr = Marshal.AllocHGlobal(size);
-                    Marshal.StructureToPtr(value, ptr, false);
-                    return ptr;
-                }
+                    MyIl2CppFieldInfo* fieldInfo = (MyIl2CppFieldInfo*)field;
+                    void* dest = (char*)obj + fieldInfo->offset;
 
-                protected Expression AllocAndCopy(Expression monoObj)
-                {
-                    // StructToHGlobal(monoObj, sizeof(T))
-                    var converter = ((Func<object, int, IntPtr>)StructToHGlobal).Method;
-
-                    int size;
-                    if (this.marshalType != null)
-                    {
-                        monoObj = Expression.Convert(monoObj, this.marshalType);
-                        size = Marshal.SizeOf(this.marshalType);
-                    }
-                    else
-                    {
-                        size = Marshal.SizeOf(monoObj.Type);
-                    }
-
-                    return Expression.Call(converter, 
-                        Expression.Convert(monoObj, typeof(object)),
-                        Expression.Constant(size));
+                    return *(T*)dest;
                 }
 
                 protected override Expression GetMonoToNativeExpression(Expression monoValue)
                 {
-                    return this.tempPtr;
+                    throw new NotImplementedException();
+                }
+
+                private unsafe static void SetValue<T>(T value, IntPtr obj, IntPtr field) where T : unmanaged
+                {
+                    MyIl2CppFieldInfo* fieldInfo = (MyIl2CppFieldInfo*)field;
+
+                    void* dest = (byte*)obj + fieldInfo->offset;
+                    *(T*)dest = value;
                 }
 
                 public override IEnumerable<Expression> GetSerialiseExpression(Expression monoObj, Expression nativePtr)
@@ -593,31 +592,16 @@ namespace FieldInjector
                         throw new InvalidOperationException("Something went very wrong");
                     }
 
-                    MethodInfo set_value = ((Action<IntPtr, IntPtr, IntPtr>)field_set_value_object).Method;
-
                     Expression monoValue = Expression.Field(monoObj, this.field);
 
-                    Expression allocAndCopy = Expression.Assign(this.tempPtr, this.AllocAndCopy(monoValue));
+                    MethodInfo setValue = ((Action<int, IntPtr, IntPtr>)SetValue).Method
+                        .GetGenericMethodDefinition()
+                        .MakeGenericMethod(monoValue.Type);
 
-                    Expression fieldValuePtr = this.tempPtr;
-
-                    Expression serialise = Expression.Call(set_value,
-                        nativePtr,
-                        Expression.Constant(this.NativeField),
-                        this.tempPtr);
-
-                    Expression free = Expression.Call(freeMethod, this.tempPtr);
-
-                    Msg($"Struct serialiser for {this.field}:\n{allocAndCopy}\n{serialise}\n{free}");
-
-                    yield return Expression.Block(
-                        new[] { this.tempPtr },
-                        new[]
-                        {
-                            allocAndCopy,
-                            serialise,
-                            free,
-                        });
+                    yield return LogExpression("NativePtr: ", nativePtr);
+                    yield return LogExpression("MonoValue: ", monoValue);
+                    yield return Expression.Call(setValue, monoValue, nativePtr, Expression.Constant(this.NativeField));
+                    //yield break;
                 }
 
                 protected override Expression GetNativeToMonoExpression(Expression nativePtr)
@@ -630,7 +614,7 @@ namespace FieldInjector
 
                     Expression res = Expression.Call(Expression.New(ctor, nativePtr), unbox);
 
-                    if (this.field.FieldType.IsEnum)
+                    if (res.Type != this.field.FieldType)
                     {
                         res = Expression.Convert(res, this.field.FieldType);
                     }
@@ -676,6 +660,8 @@ namespace FieldInjector
                         throw new NotSupportedException($"Array element type not supported: {elementType}");
                     }
 
+                    if (elementType.IsEnum) { throw new NotImplementedException("TODO"); }
+
                     this._fieldType = Marshal.AllocHGlobal(Marshal.SizeOf<MyIl2CppType>());
 
                     IntPtr elementTypePtr = il2cpp_class_get_type(GetClassPointerForType(elementType));
@@ -720,6 +706,18 @@ namespace FieldInjector
         #region Enum Injector
 
         private static readonly Dictionary<Type, IntPtr> enumClasses = new Dictionary<Type, IntPtr>();
+
+        internal static void DebugEnumType(Type type)
+        {
+            IntPtr typePtr = il2cpp_class_get_type(GetEnumClassPtr(type));
+            IntPtr klassPtr = il2cpp_class_from_type(typePtr);
+            Msg($"Checking conversion for {type.FullName}");
+            Msg($"    Name: {Marshal.PtrToStringAnsi(il2cpp_type_get_name(typePtr))}");
+            Msg($"    Type: {il2cpp_type_get_type(typePtr)}");
+            Msg($"    CFlags: {il2cpp_class_get_flags(klassPtr)}");
+            Msg($"    CName: {Marshal.PtrToStringAnsi(il2cpp_class_get_name(klassPtr))}");
+            Msg($"    IsValueType: {il2cpp_class_is_valuetype(klassPtr)}");
+        }
 
         internal static void DebugEnum()
         {
@@ -833,7 +831,7 @@ namespace FieldInjector
             klass.ActualSize = elemKlass.ActualSize;
             klass.InstanceSize = elemKlass.InstanceSize;
             klass.NativeSize = elemKlass.NativeSize;
-            klass.Flags = Il2CppClassAttributes.TYPE_ATTRIBUTE_PUBLIC | Il2CppClassAttributes.TYPE_ATTRIBUTE_SEALED | Il2CppClassAttributes.TYPE_ATTRIBUTE_SERIALIZABLE;
+            klass.Flags = Il2CppClassAttributes.TYPE_ATTRIBUTE_PUBLIC | Il2CppClassAttributes.TYPE_ATTRIBUTE_SEALED;
 
             klass.Initialized = klass.InitializedAndNoError = klass.SizeInited = klass.IsVtableInitialized = true;
             klass.HasFinalize = false;
@@ -868,14 +866,19 @@ namespace FieldInjector
             klass.ThisArg.ByRef = true;
             klass.ThisArg.Data = (IntPtr)metadataToken;
 
-            ClassInjector.AddToClassFromNameDictionary(enumType, klass.Pointer);
+            RuntimeSpecificsStore.SetClassInfo(klass.Pointer, true, true);
+
             typeof(Il2CppClassPointerStore<>).MakeGenericType(enumType)
                 .GetField(nameof(Il2CppClassPointerStore<int>.NativeClassPtr))
                 .SetValue(null, klass.Pointer);
 
+            ClassInjector.AddToClassFromNameDictionary(enumType, klass.Pointer);
+
             enumClasses.Add(enumType, klass.Pointer);
 
             Msg($"Injected enum {enumType.Name} at {klass.Pointer}");
+
+            MyIl2CppClass* klassPtMy = (MyIl2CppClass*)klass.Pointer;
 
             return classPtr;
         }
@@ -978,11 +981,11 @@ namespace FieldInjector
                 case Il2CppTypeEnum.IL2CPP_TYPE_PTR:
                     return IntPtr.Size;
                 case Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE:
-                    var klass1 = Wrap((Il2CppClass*)il2cpp_type_get_class_or_element_class(type.Pointer));
+                    var klass1 = Wrap((Il2CppClass*)il2cpp_class_from_il2cpp_type(type.Pointer));
                     if (type.Type == Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE && klass1.EnumType)
                     {
                         var chrs = (byte*)klass1.Name;
-                        Msg($"Enum Basetype debug: {klass1.Pointer}, {(IntPtr)chrs}");
+                        Msg($"Enum Basetype debug: {klass1.Pointer}, {(IntPtr)chrs}, {Marshal.StringToHGlobalAnsi("test")}");
                         Msg($"Chr: {(char)(*chrs)}");
                         Msg($"elemt={(IntPtr)klass1.ElementClass}");
                         Msg($"elemtname={Marshal.PtrToStringAnsi(il2cpp_type_get_name((IntPtr)klass1.ElementClass))}");
@@ -1009,7 +1012,7 @@ namespace FieldInjector
 
             if (type.IsEnum && !bypassEnums)
             {
-                return GetEnumClassPtr(type);
+                throw new NotSupportedException("Trying to get pointer for enum type");
             }
 
             return (IntPtr)typeof(Il2CppClassPointerStore<>).MakeGenericType(type).GetField("NativeClassPtr").GetValue(null);
