@@ -27,7 +27,7 @@ internal class TestMB8 : MonoBehaviour
     static void Log(string s) => Debug.Log(s);
 #endif
 
-    public enum TestEnum : int
+    public enum TestEnum : byte
     {
         A,
         B,
@@ -39,6 +39,8 @@ internal class TestMB8 : MonoBehaviour
     public TestEnum testEnum;
     public int flagValue;
     public Transform tr;
+    public TestEnum[] array1;
+    //public List<Space> spaces;
 
     public void Start()
     {
@@ -47,5 +49,13 @@ internal class TestMB8 : MonoBehaviour
         Log($"space is: {this.space}");
         Log($"testB is: {this.testB}");
         Log($"test is: {this.testEnum}");
+        if (this.array1 != null)
+        {
+            Log($"array is: [{string.Join(", ", this.array1)}]");
+        }
+        else
+        {
+            Log($"array is null");
+        }
     }
 }

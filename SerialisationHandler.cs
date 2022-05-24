@@ -640,6 +640,12 @@ namespace FieldInjector
                 public ArrayField(FieldInfo field) : base(field)
                 {
                     var elementType = field.FieldType.GetElementType();
+
+                    if (elementType.IsEnum)
+                    {
+                        elementType = elementType.GetEnumUnderlyingType();
+                    }
+
                     if (elementType.IsValueType)
                     {
                         this._proxyType = typeof(Il2CppStructArray<>).MakeGenericType(elementType);
@@ -660,8 +666,6 @@ namespace FieldInjector
                         throw new NotSupportedException($"Array element type not supported: {elementType}");
                     }
 
-                    if (elementType.IsEnum) { throw new NotImplementedException("TODO"); }
-
                     this._fieldType = Marshal.AllocHGlobal(Marshal.SizeOf<MyIl2CppType>());
 
                     IntPtr elementTypePtr = il2cpp_class_get_type(GetClassPointerForType(elementType));
@@ -681,10 +685,7 @@ namespace FieldInjector
                 protected override Expression GetMonoToNativeExpression(Expression monoObj)
                 {
                     // ((TArray)obj).Pointer
-                    var ptr = typeof(Il2CppSystem.Object).GetProperty("Pointer");
-                    return Expression.Property(
-                        Expression.Convert(monoObj, this._proxyType),
-                        ptr);
+                    return ConvertArrayToIl2Cpp(monoObj, this._proxyType);
                 }
 
                 protected override Expression GetNativeToMonoExpression(Expression nativePtr)
@@ -692,11 +693,85 @@ namespace FieldInjector
                     // T = elementType, targetType = T[]
                     // (T[]) new TArray(ptr)
                     var ctor = this._proxyType.GetConstructor(new Type[] { typeof(IntPtr) });
+                    Expression cppArray = Expression.New(ctor, nativePtr);
+
+                    return ConvertArrayToMono(cppArray, this.field.FieldType);
+                }
+
+                public static Expression ConvertArrayToMono(Expression cppArray, Type monoType)
+                {
+                    if (!monoType.IsArray) { throw new ArgumentException("monoType is not an array!"); }
+                    Type monoElementType = monoType.GetElementType();
+
+                    if (monoElementType.IsValueType)
+                    {
+                        Type cppElementType = cppArray.Type.BaseType.GetGenericArguments()[0];
+
+                        MethodInfo convertStructArray = ((Func<Il2CppStructArray<int>, int[]>)ConvertStructArray<int, int>)
+                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType, cppElementType);
+
+                        return Expression.Call(convertStructArray, cppArray);
+                    }
+
                     return Expression.Convert(
-                        Expression.Convert(
-                            Expression.New(ctor, nativePtr),
-                            this._proxyBaseType),
-                        this.field.FieldType);
+                        Expression.Convert(cppArray, cppArray.Type.BaseType),
+                        monoType);
+                }
+
+                public static Expression ConvertArrayToIl2Cpp(Expression monoArray, Type cppType)
+                {
+                    Type cppElementType = cppType.BaseType.GetGenericArguments()[0];
+                    Type monoElementType = monoArray.Type.GetElementType();
+
+                    Expression cppArray;
+
+                    if (cppElementType.IsValueType)
+                    {
+                        MethodInfo convertStructArray = ((Func<int[], Il2CppStructArray<int>>)ConvertStructArray<int, int>)
+                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType, cppElementType);
+
+                        cppArray = Expression.Call(convertStructArray, monoArray);
+                    }
+                    else
+                    {
+                        cppArray = Expression.Convert(monoArray, cppType);
+                    }
+
+                    var ptr = typeof(Il2CppSystem.Object).GetProperty("Pointer");
+                    return Expression.Property(cppArray, ptr);
+                }
+
+                private static TMono[] ConvertStructArray<TMono, TCpp>(Il2CppStructArray<TCpp> cppArray) 
+                    where TMono : unmanaged
+                    where TCpp : unmanaged
+                {
+                    int size = sizeof(TMono);
+                    if (size != sizeof(TCpp)) { throw new ArgumentException("Size mismatch in array copy."); }
+
+                    TMono[] res = new TMono[cppArray.Count];
+                    TMono* cppPtr = (TMono*)(cppArray.Pointer + (4 * IntPtr.Size));
+                    for (int i = 0; i < cppArray.Count; i++)
+                    {
+                        res[i] = cppPtr[i];
+                    }
+
+                    return res;
+                }
+
+                public static Il2CppStructArray<TCpp> ConvertStructArray<TMono, TCpp>(TMono[] monoArray)
+                    where TMono : unmanaged
+                    where TCpp : unmanaged
+                {
+                    Il2CppStructArray<TCpp> res = new Il2CppStructArray<TCpp>(monoArray.Length);
+
+                    TMono* cppPtr = (TMono*)(res.Pointer + (4 * IntPtr.Size));
+
+                    for (int i = 0; i < monoArray.Length; i++)
+                    {
+                        cppPtr[i] = monoArray[i];
+                    }
+
+                    return res;
                 }
             }
         }
