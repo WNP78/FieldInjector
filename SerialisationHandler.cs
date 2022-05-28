@@ -18,6 +18,8 @@ using UnhollowerBaseLib.Runtime.VersionSpecific.Class;
 using UnhollowerBaseLib.Runtime.VersionSpecific.MethodInfo;
 using System.Threading;
 
+using ILCollections = Il2CppSystem.Collections.Generic;
+
 namespace FieldInjector
 {
     public static unsafe class SerialisationHandler
@@ -50,17 +52,13 @@ namespace FieldInjector
 
         private static Il2CppImage* Image;
 
-        public static void Inject<T>(int debugLevel = 1) where T : MonoBehaviour
+        public static void Inject<T>(int debugLevel = 0) where T : MonoBehaviour
         {
-            //ClassInjector.RegisterTypeInIl2Cpp<T>(false);
-            //return;
             InjectRecursive(typeof(T), debugLevel);
         }
 
-        public static void Inject(Type t, int debugLevel = 1)
+        public static void Inject(Type t, int debugLevel = 0)
         {
-            //ClassInjector.RegisterTypeInIl2Cpp(t, false);
-            //return;
             InjectRecursive(t, debugLevel);
         }
 
@@ -166,6 +164,7 @@ namespace FieldInjector
 
             // Reassign our new size, remembering the last IntPtr.
             klass.ActualSize = klass.InstanceSize = (uint)(offset + IntPtr.Size);
+            klassPtr->gc_desc = IntPtr.Zero;
 
             // Preparing to do serialisation - find some info about the ISerializationCallbackReceiver
             Il2CppClass* callbackRecieverClass = (Il2CppClass*)Il2CppClassPointerStore<ISerializationCallbackReceiver>.NativeClassPtr;
@@ -219,7 +218,6 @@ namespace FieldInjector
 
             if (debugLevel >= 3) 
             {
-                expressions = expressions.Prepend(LogExpression("GCHandle: ", Expression.Call(getGCHandleMethod, nativePtr)));
                 expressions = expressions.Prepend(LogExpression("Deserialise: ", nativePtr));
                 expressions = expressions.Append(LogExpression("Deserialise complete: ", nativePtr));
             }
@@ -240,7 +238,6 @@ namespace FieldInjector
 
             if (debugLevel >= 3)
             {
-                expressions = expressions.Prepend(LogExpression("GCHandle: ", Expression.Call(getGCHandleMethod, nativePtr)));
                 expressions = expressions.Prepend(LogExpression("Serialise: ", nativePtr));
                 expressions = expressions.Append(LogExpression("Serialise complete: ", nativePtr));
             }
@@ -442,6 +439,10 @@ namespace FieldInjector
                 {
                     return new ArrayField(field);
                 }
+                else if (fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(List<>))
+                {
+                    return new ListField(field);
+                }
 
                 throw new NotSupportedException($"Field type not supported: {field}");
             }
@@ -460,11 +461,8 @@ namespace FieldInjector
 
                 infoOut.Type = (Il2CppTypeStruct*)typePtr;
 
-                //var size = GetTypeSize(Wrap((Il2CppTypeStruct*)typePtr), out uint align);
                 var size = this.GetFieldSize(out int align);
                 offset = AlignTo(offset, align);
-
-                Msg($"Inject at {offset} for {size}, ending at {offset + size}");
 
                 infoOut.Offset = offset;
 
@@ -482,7 +480,7 @@ namespace FieldInjector
 
                 public override int GetFieldSize(out int align)
                 {
-                    align = 0;
+                    align = sizeof(IntPtr);
                     return sizeof(IntPtr);
                 }
 
@@ -509,7 +507,7 @@ namespace FieldInjector
 
                 public override int GetFieldSize(out int align)
                 {
-                    align = 0;
+                    align = sizeof(IntPtr);
                     return sizeof(IntPtr);
                 }
 
@@ -598,8 +596,6 @@ namespace FieldInjector
                         .GetGenericMethodDefinition()
                         .MakeGenericMethod(monoValue.Type);
 
-                    yield return LogExpression("NativePtr: ", nativePtr);
-                    yield return LogExpression("MonoValue: ", monoValue);
                     yield return Expression.Call(setValue, monoValue, nativePtr, Expression.Constant(this.NativeField));
                     //yield break;
                 }
@@ -625,150 +621,271 @@ namespace FieldInjector
 
             private class ArrayField : SerialisedField
             {
-                private IntPtr _fieldType;
+                protected IntPtr _fieldType;
 
-                private Type _proxyType;
-
-                private Type _proxyBaseType;
+                protected Type _proxyType;
 
                 public override int GetFieldSize(out int align)
                 {
-                    align = 0;
+                    align = sizeof(IntPtr);
                     return sizeof(IntPtr);
                 }
 
-                public ArrayField(FieldInfo field) : base(field)
+                protected ArrayField (Type elementType, FieldInfo field) : base(field)
                 {
-                    var elementType = field.FieldType.GetElementType();
-
                     if (elementType.IsEnum)
                     {
                         elementType = elementType.GetEnumUnderlyingType();
                     }
 
-                    if (elementType.IsValueType)
-                    {
-                        this._proxyType = typeof(Il2CppStructArray<>).MakeGenericType(elementType);
-                        this._proxyBaseType = typeof(Il2CppArrayBase<>).MakeGenericType(elementType);
-                    }
-                    else if (typeof(Il2CppSystem.Object).IsAssignableFrom(elementType))
-                    {
-                        this._proxyType = typeof(Il2CppReferenceArray<>).MakeGenericType(elementType);
-                        this._proxyBaseType = typeof(Il2CppArrayBase<>).MakeGenericType(elementType);
-                    }
-                    else if (elementType == typeof(string)) 
-                    { 
-                        this._proxyType = typeof(Il2CppStringArray);
-                        this._proxyBaseType = typeof(Il2CppArrayBase<string>);
-                    }
-                    else
-                    {
-                        throw new NotSupportedException($"Array element type not supported: {elementType}");
-                    }
-
-                    this._fieldType = Marshal.AllocHGlobal(Marshal.SizeOf<MyIl2CppType>());
-
-                    IntPtr elementTypePtr = il2cpp_class_get_type(GetClassPointerForType(elementType));
-
-                    MyIl2CppType* myType = (MyIl2CppType*)this._fieldType;
-                    *myType = new MyIl2CppType()
-                    {
-                        type = Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
-                        data = elementTypePtr,
-                        attrs = 0,
-                        mods_byref_pin = 0,
-                    };
+                    this._proxyType = typeof(ILCollections.List<>).MakeGenericType(elementType);
+                    var classPtr = GetClassPointerForType(this._proxyType);
+                    this._fieldType = il2cpp_class_get_type(classPtr);
                 }
+
+                public ArrayField(FieldInfo field) : this(field.FieldType.GetElementType(), field) { }
 
                 protected override IntPtr fieldType => this._fieldType;
 
                 protected override Expression GetMonoToNativeExpression(Expression monoObj)
                 {
-                    // ((TArray)obj).Pointer
-                    return ConvertArrayToIl2Cpp(monoObj, this._proxyType);
+                    return ConvertArrayToIl2CppList(monoObj, this._proxyType);
                 }
 
                 protected override Expression GetNativeToMonoExpression(Expression nativePtr)
                 {
-                    // T = elementType, targetType = T[]
-                    // (T[]) new TArray(ptr)
                     var ctor = this._proxyType.GetConstructor(new Type[] { typeof(IntPtr) });
-                    Expression cppArray = Expression.New(ctor, nativePtr);
+                    Expression cppList = Expression.New(ctor, nativePtr);
 
-                    return ConvertArrayToMono(cppArray, this.field.FieldType);
+                    return ConvertListToMono(cppList, this.field.FieldType);
                 }
 
-                public static Expression ConvertArrayToMono(Expression cppArray, Type monoType)
+                public static Expression ConvertListToMono(Expression cppList, Type monoType)
                 {
                     if (!monoType.IsArray) { throw new ArgumentException("monoType is not an array!"); }
                     Type monoElementType = monoType.GetElementType();
 
                     if (monoElementType.IsValueType)
                     {
-                        Type cppElementType = cppArray.Type.BaseType.GetGenericArguments()[0];
+                        Type cppElementType = cppList.Type.GetGenericArguments()[0];
 
-                        MethodInfo convertStructArray = ((Func<Il2CppStructArray<int>, int[]>)ConvertStructArray<int, int>)
+                        MethodInfo convertStructList = ((Func<ILCollections.List<int>, int[]>)ConvertStructList<int, int>)
                             .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType, cppElementType);
 
-                        return Expression.Call(convertStructArray, cppArray);
-                    }
-
-                    return Expression.Convert(
-                        Expression.Convert(cppArray, cppArray.Type.BaseType),
-                        monoType);
-                }
-
-                public static Expression ConvertArrayToIl2Cpp(Expression monoArray, Type cppType)
-                {
-                    Type cppElementType = cppType.BaseType.GetGenericArguments()[0];
-                    Type monoElementType = monoArray.Type.GetElementType();
-
-                    Expression cppArray;
-
-                    if (cppElementType.IsValueType)
-                    {
-                        MethodInfo convertStructArray = ((Func<int[], Il2CppStructArray<int>>)ConvertStructArray<int, int>)
-                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType, cppElementType);
-
-                        cppArray = Expression.Call(convertStructArray, monoArray);
+                        return Expression.Call(convertStructList, cppList);
                     }
                     else
                     {
-                        cppArray = Expression.Convert(monoArray, cppType);
+                        MethodInfo convertGeneralList = ((Func<ILCollections.List<int>, int[]>)ConvertGeneralList<int>)
+                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType);
+
+                        return Expression.Call(convertGeneralList, cppList);
+                    }
+                }
+
+                public static Expression ConvertArrayToIl2CppList(Expression monoArray, Type cppType)
+                {
+                    Type cppElementType = cppType.GetGenericArguments()[0];
+                    Type monoElementType = monoArray.Type.GetElementType();
+
+                    Expression cppList;
+
+                    if (cppElementType.IsValueType)
+                    {
+                        MethodInfo convertStructArray = ((Func<int[], ILCollections.List<int>>)ConvertStructArray<int, int>)
+                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType, cppElementType);
+
+                        cppList = Expression.Call(convertStructArray, monoArray);
+                    }
+                    else
+                    {
+                        MethodInfo convertGeneralArray = ((Func<int[], ILCollections.List<int>>)ConvertGeneralArray<int>)
+                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType);
+
+                        cppList = Expression.Call(convertGeneralArray, monoArray);
                     }
 
                     var ptr = typeof(Il2CppSystem.Object).GetProperty("Pointer");
-                    return Expression.Property(cppArray, ptr);
+                    return Expression.Property(cppList, ptr);
                 }
 
-                private static TMono[] ConvertStructArray<TMono, TCpp>(Il2CppStructArray<TCpp> cppArray) 
+                private static TMono[] ConvertStructList<TMono, TCpp>(ILCollections.List<TCpp> cppList) 
                     where TMono : unmanaged
                     where TCpp : unmanaged
                 {
                     int size = sizeof(TMono);
                     if (size != sizeof(TCpp)) { throw new ArgumentException("Size mismatch in array copy."); }
 
-                    TMono[] res = new TMono[cppArray.Count];
-                    TMono* cppPtr = (TMono*)(cppArray.Pointer + (4 * IntPtr.Size));
-                    for (int i = 0; i < cppArray.Count; i++)
+                    TMono[] res = new TMono[cppList.Count];
+                    fixed (TMono* resPtr = res)
                     {
-                        res[i] = cppPtr[i];
+                        for (int i = 0; i < res.Length; i++)
+                        {
+                            *(TCpp*)(resPtr + i) = cppList[i];
+                        }
                     }
 
                     return res;
                 }
 
-                public static Il2CppStructArray<TCpp> ConvertStructArray<TMono, TCpp>(TMono[] monoArray)
+                private static T[] ConvertGeneralList<T>(ILCollections.List<T> cppList)
+                {
+                    T[] res = new T[cppList.Count];
+                    for (int i = 0;i < res.Length; i++)
+                    {
+                        res[i] = cppList[i];
+                    }
+
+                    return res;
+                }
+
+                public static ILCollections.List<TCpp> ConvertStructArray<TMono, TCpp>(TMono[] monoArray)
                     where TMono : unmanaged
                     where TCpp : unmanaged
                 {
-                    Il2CppStructArray<TCpp> res = new Il2CppStructArray<TCpp>(monoArray.Length);
+                    var res = new ILCollections.List<TCpp>(monoArray.Length);
+                    fixed (TMono* monoPtr = monoArray)
+                    {
+                        for (int i = 0; i < monoArray.Length; i++)
+                        {
+                            TMono* ptr = &monoPtr[i];
+                            res.Add(*(TCpp*)ptr);
+                        }
+                    }
 
-                    TMono* cppPtr = (TMono*)(res.Pointer + (4 * IntPtr.Size));
+                    return res;
+                }
+
+                public static ILCollections.List<T> ConvertGeneralArray<T>(T[] monoArray)
+                {
+                    var res = new ILCollections.List<T>(monoArray.Length);
 
                     for (int i = 0; i < monoArray.Length; i++)
                     {
-                        cppPtr[i] = monoArray[i];
+                        res.Add(monoArray[i]);
+                    }
+
+                    return res;
+                }
+            }
+
+            private class ListField : ArrayField
+            {
+                public ListField(FieldInfo field) : base(field.FieldType.GetGenericArguments()[0], field)
+                {
+                }
+
+                protected override Expression GetMonoToNativeExpression(Expression monoObj)
+                {
+                    return Expression.Property(ListToCpp(monoObj, this._proxyType), "Pointer");
+                }
+
+                protected override Expression GetNativeToMonoExpression(Expression nativePtr)
+                {
+                    var ctor = this._proxyType.GetConstructor(new Type[] { typeof(IntPtr) });
+                    Expression cppList = Expression.New(ctor, nativePtr);
+                    return ListToManaged(cppList, this.field.FieldType);
+                }
+
+                public static Expression ListToCpp(Expression list, Type cppType)
+                {
+                    Type monoElementType = list.Type.GetGenericArguments()[0];
+
+                    MethodInfo converter;
+                    if (monoElementType.IsValueType)
+                    {
+                        Type cppElementType = cppType.GetGenericArguments()[0];
+                        converter = ((Func<List<int>, ILCollections.List<int>>)ListToCppStruct<int, int>)
+                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType, cppElementType);
+                    }
+                    else
+                    {
+                        converter = ((Func<List<int>, ILCollections.List<int>>)ListToCppRef<int>)
+                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType);
+                    }
+
+                    return Expression.Call(converter, list);
+                }
+
+                private static ILCollections.List<TCpp> ListToCppStruct<TMono, TCpp>(List<TMono> list)
+                    where TMono : unmanaged
+                    where TCpp : unmanaged
+                {
+                    ILCollections.List<TCpp> res = new ILCollections.List<TCpp>(list.Count);
+
+                    TMono monoVal = default;
+                    TCpp* ptr = (TCpp*)&monoVal;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        monoVal = list[i];
+                        res.Add(*ptr);
+                    }
+
+                    return res;
+                }
+
+                private static ILCollections.List<T> ListToCppRef<T>(List<T> list)
+                {
+                    ILCollections.List<T> res = new ILCollections.List<T>(list.Count);
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        res.Add(list[i]);
+                    }
+
+                    return res;
+                }
+
+                public static Expression ListToManaged(Expression list, Type fieldType)
+                {
+                    Type monoElementType = fieldType.GetGenericArguments()[0];
+                    Type cppElementType = list.Type.GetGenericArguments()[0];
+                    MethodInfo converter;
+
+                    if (monoElementType.IsValueType)
+                    {
+                        converter = ((Func<ILCollections.List<int>, List<int>>)ListToManagedStruct<int, int>)
+                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType, cppElementType);
+                    }
+                    else
+                    {
+                        if (monoElementType != cppElementType)
+                        {
+                            throw new ArgumentException($"Mono type != Cpp type for element in ref list!");
+                        }
+
+                        converter = converter = ((Func<ILCollections.List<int>, List<int>>)ListToManagedRef<int>)
+                            .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType);
+                    }
+
+                    return Expression.Call(converter, list);
+                }
+
+                private static List<TMono> ListToManagedStruct<TMono, TCpp>(ILCollections.List<TCpp> list)
+                    where TMono : unmanaged
+                    where TCpp : unmanaged
+                {
+                    var res = new List<TMono>(list.Count);
+
+                    TCpp cppVal = default;
+                    TMono* ptr = (TMono*)&cppVal;
+
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        cppVal = list[i];
+                        res.Add(*ptr);
+                    }
+
+                    return res;
+                }
+
+                private static List<T> ListToManagedRef<T>(ILCollections.List<T> list)
+                {
+                    int count = list.Count;
+                    var res = new List<T>(count);
+
+                    for (int i = 0; i < count; i++)
+                    {
+                        res.Add(list[i]);
                     }
 
                     return res;
@@ -777,198 +894,6 @@ namespace FieldInjector
         }
 
         #endregion
-
-        #region Enum Injector
-
-        private static readonly Dictionary<Type, IntPtr> enumClasses = new Dictionary<Type, IntPtr>();
-
-        internal static void DebugEnumType(Type type)
-        {
-            IntPtr typePtr = il2cpp_class_get_type(GetEnumClassPtr(type));
-            IntPtr klassPtr = il2cpp_class_from_type(typePtr);
-            Msg($"Checking conversion for {type.FullName}");
-            Msg($"    Name: {Marshal.PtrToStringAnsi(il2cpp_type_get_name(typePtr))}");
-            Msg($"    Type: {il2cpp_type_get_type(typePtr)}");
-            Msg($"    CFlags: {il2cpp_class_get_flags(klassPtr)}");
-            Msg($"    CName: {Marshal.PtrToStringAnsi(il2cpp_class_get_name(klassPtr))}");
-            Msg($"    IsValueType: {il2cpp_class_is_valuetype(klassPtr)}");
-        }
-
-        internal static void DebugEnum()
-        {
-            string typeToName(Il2CppTypeStruct* tptr)
-            {
-                return Marshal.PtrToStringAnsi(il2cpp_type_get_name((IntPtr)tptr));
-            }
-
-            Msg($"Test:\n\n");
-
-            IntPtr ptr = LookupIl2CppEnum(typeof(Space));
-
-            if (ptr == IntPtr.Zero) { return; }
-            
-
-            var klass1 = Wrap((Il2CppClass*)ptr);
-            debugInfo(klass1);
-
-            //var img = Wrap((Il2CppClass*)Il2CppClassPointerStore<TMPro.FastAction>.NativeClassPtr).Image;
-
-            unsafe void debugType(INativeTypeStruct tp)
-            {
-                var tp_ptr = (MyIl2CppType*)tp.Pointer;
-                Msg($"Type.Type = {tp_ptr->type}");
-                Msg($"Type.mbp = {tp_ptr->mods_byref_pin}");
-                Msg($"Type.byref = {tp.ByRef}");
-                Msg($"Type.pinned = {tp.Pinned}");
-                Msg($"Type.attrs = {tp_ptr->attrs}");
-                Msg($"Type.data = {tp.Data}");
-            }
-
-            void debugInfo(INativeClassStruct klass)
-            {
-                Msg($"Klass: {Marshal.PtrToStringAnsi(klass.Name)}");
-                Msg($"Sizes: AS={klass.ActualSize}, IS={klass.InstanceSize}, NS={klass.NativeSize}");
-                Msg($"Flags: {klass.Flags}");
-                Msg($"BVA: {typeToName(klass.ByValArg.TypePointer)} TA: {typeToName(klass.ThisArg.TypePointer)}");
-                Msg($"CC: {Marshal.PtrToStringAnsi(Wrap(klass.CastClass).Name)}");
-                Msg($"Value: {klass.ValueType} Enum: {klass.EnumType}");
-                INativeClassStruct elementClass = Wrap(klass.ElementClass);
-                Msg($"Elem: {Marshal.PtrToStringAnsi(elementClass.Name)}, elem sizes: AS={elementClass.ActualSize}, IS={elementClass.InstanceSize}, NS={elementClass.NativeSize}");
-                if (klass.Parent == null)
-                {
-                    Msg("No parent");
-                }
-                else
-                {
-                    Msg($"BaseClass: {Marshal.PtrToStringAnsi(Wrap(klass.Parent).Name)}");
-                }
-
-                Msg($"Method Count: {klass.MethodCount}");
-                Msg($"Vtable Count: {klass.VtableCount}");
-                Msg($"Methods: {(IntPtr)klass.Methods}");
-                Msg($"Underlying: {il2cpp_class_enum_basetype(klass.Pointer)}");
-                //Msg($"HasFinalize: {klass.HasFinalize}");
-                
-                foreach (var prop in klass.GetType().GetProperties())
-                {
-                    if (prop.PropertyType.IsByRef) { continue; }
-                    object val=  prop.GetValue(klass);
-                    Msg($"{prop.Name} = {val}");
-                }
-
-                Msg("BVA:");
-                debugType(klass.ByValArg);
-                Msg($"TA:");
-                debugType(klass.ThisArg);
-
-                Msg($"\n\n");
-            }
-
-
-        }
-
-        private static IntPtr GetEnumClassPtr(Type enumType)
-        {
-            if (!enumType.IsEnum) { throw new InvalidOperationException($"{enumType} is not an enum"); }
-
-            if (enumClasses.TryGetValue(enumType, out var result)) { return result; }
-
-            IntPtr existingClass = LookupIl2CppEnum(enumType);
-            Msg($"Got ptr {existingClass} for {enumType.Module.Name}, {enumType.Namespace}, {enumType.Name}");
-            if (existingClass != IntPtr.Zero)
-            {
-                enumClasses.Add(enumType, existingClass);
-                return existingClass;
-            }
-
-            Type underlyingType = enumType.GetEnumUnderlyingType();
-
-            Msg($"Injecting enum: {enumType.Name} ({underlyingType.Name})");
-
-            IntPtr underlyingClassPtr = GetClassPointerForType(underlyingType);
-            IntPtr enumBasePtr = Il2CppClassPointerStore<Il2CppSystem.Enum>.NativeClassPtr;
-            var elemKlass = Wrap((Il2CppClass*)underlyingClassPtr);
-            var enumKlass = Wrap((Il2CppClass*)enumBasePtr);
-
-            Msg($"Underlying class ptr: {underlyingClassPtr}");
-            Msg($"Enum class ptr: {enumBasePtr}");
-            Msg($"Enum vtable count: {enumKlass.VtableCount}");
-
-            int vtableSize = enumKlass.VtableCount; // should be 23
-
-            var klass = NewClass(23);
-            var classPtr = klass.Pointer;
-            klass.Image = Image;
-            klass.Parent = (Il2CppClass*)enumBasePtr;
-            klass.Class = klass.ClassPointer;
-            klass.ValueType = true;
-            klass.ElementClass = elemKlass.ClassPointer;
-            klass.ActualSize = elemKlass.ActualSize;
-            klass.InstanceSize = elemKlass.InstanceSize;
-            klass.NativeSize = elemKlass.NativeSize;
-            klass.Flags = Il2CppClassAttributes.TYPE_ATTRIBUTE_PUBLIC | Il2CppClassAttributes.TYPE_ATTRIBUTE_SEALED;
-
-            klass.Initialized = klass.InitializedAndNoError = klass.SizeInited = klass.IsVtableInitialized = true;
-            klass.HasFinalize = false;
-            klass.MethodCount = 0;
-            klass.Methods = null;
-
-            klass.Name = Marshal.StringToHGlobalAnsi(enumType.Name);
-            if (enumType.Namespace != null)
-            {
-                klass.Namespace = Marshal.StringToHGlobalAnsi(enumType.Namespace);
-            }
-
-            var vtable = (VirtualInvokeData*)klass.VTable;
-            var srcVtable = (VirtualInvokeData*)enumKlass.VTable;
-            for (int i = 0; i < vtableSize; i++)
-            {
-                vtable[i] = srcVtable[i];
-            }
-
-            klass.ImplementedInterfaces = enumKlass.ImplementedInterfaces;
-            klass.InterfaceCount = enumKlass.InterfaceCount;
-            klass.InterfaceOffsets = enumKlass.InterfaceOffsets;
-            klass.InterfaceOffsetsCount = enumKlass.InterfaceOffsetsCount;
-
-            var metadataToken = Interlocked.Decrement(ref ClassInjector.ourClassOverrideCounter);
-            ClassInjector.FakeTokenClasses[metadataToken] = klass.Pointer;
-
-            klass.ByValArg.Type = Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE;
-            klass.ByValArg.Data = (IntPtr)metadataToken;
-
-            klass.ThisArg.Type = Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE;
-            klass.ThisArg.ByRef = true;
-            klass.ThisArg.Data = (IntPtr)metadataToken;
-
-            RuntimeSpecificsStore.SetClassInfo(klass.Pointer, true, true);
-
-            typeof(Il2CppClassPointerStore<>).MakeGenericType(enumType)
-                .GetField(nameof(Il2CppClassPointerStore<int>.NativeClassPtr))
-                .SetValue(null, klass.Pointer);
-
-            ClassInjector.AddToClassFromNameDictionary(enumType, klass.Pointer);
-
-            enumClasses.Add(enumType, klass.Pointer);
-
-            Msg($"Injected enum {enumType.Name} at {klass.Pointer}");
-
-            MyIl2CppClass* klassPtMy = (MyIl2CppClass*)klass.Pointer;
-
-            return classPtr;
-        }
-
-        private static IntPtr LookupIl2CppEnum(Type enumType)
-        {
-            var image = GetIl2CppImage(enumType.Module.Name);
-            if (image == IntPtr.Zero) { return IntPtr.Zero; }
-
-            var res = il2cpp_class_from_name(image, enumType.Namespace, enumType.Name);
-
-            return res;
-        }
-
-        #endregion Enum Injector
 
         #region Finalize patch
 
@@ -1104,7 +1029,7 @@ namespace FieldInjector
         #region IL2CPP Structs (hacky and version-specific)
 
         [StructLayout(LayoutKind.Sequential)]
-        private unsafe struct MyIl2CppFieldInfo // Il2CppFieldInfo_24_1
+        internal unsafe struct MyIl2CppFieldInfo // Il2CppFieldInfo_24_1
         {
             public IntPtr name; // const char*
             public Il2CppTypeStruct* type; // const
@@ -1114,7 +1039,7 @@ namespace FieldInjector
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private unsafe struct MyIl2CppClass // Il2CppClass_24_1_B
+        internal unsafe struct MyIl2CppClass // Il2CppClass_24_1_B
         {
             // The following fields are always valid for a Il2CppClass structure
             public Il2CppImage* image; // const
@@ -1215,7 +1140,7 @@ namespace FieldInjector
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct MyIl2CppType
+        internal struct MyIl2CppType
         {
             /*union
             {
@@ -1242,7 +1167,7 @@ namespace FieldInjector
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private unsafe struct MyIl2CppParameterInfo
+        internal unsafe struct MyIl2CppParameterInfo
         {
             public IntPtr name; // const char*
             public int position;

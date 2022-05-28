@@ -1,5 +1,11 @@
 ﻿using MelonLoader;
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.InteropServices;
+using UnhollowerBaseLib;
+using UnhollowerRuntimeLib;
+using UnhollowerRuntimeLib.XrefScans;
 using UnityEngine;
 using Logging = MelonLoader.MelonLogger;
 
@@ -9,15 +15,12 @@ namespace FieldInjector
     {
         public override void OnApplicationStart()
         {
-
-            //SerialisationHandler.DebugEnum();
-            //SerialisationHandler.DebugEnumType(typeof(Space));
-            //SerialisationHandler.DebugEnumType(typeof(AnisotropicFiltering));
-            SerialisationHandler.Inject<TestMB8>(debugLevel: 5);
+            //SerialisationHandler.Inject<TestMB8>(debugLevel: 5);
         }
     }
 
 }
+/*
 internal class TestMB8 : MonoBehaviour
 {
 #if !UNITY_EDITOR
@@ -40,7 +43,36 @@ internal class TestMB8 : MonoBehaviour
     public int flagValue;
     public Transform tr;
     public TestEnum[] array1;
-    //public List<Space> spaces;
+    public List<Space> spaces;
+    public string[] stringArray;
+    public List<string> stringList;
+    public Transform[] transformArray;
+    public List<GameObject> objectList;
+    public string testString;
+
+    private static string PrintArray<T>(T[] arr)
+    {
+        if (arr == null)
+        {
+            return "null";
+        }
+        else
+        {
+            return $"[{arr.Length}]: {string.Join(",", arr)}";
+        }
+    }
+
+    private static string PrintObjArray(IEnumerable<UnityEngine.Object> arr)
+    {
+        if (arr == null)
+        {
+            return "null";
+        }
+        else
+        {
+            return $"[{arr.Count()}]: {string.Join(",", arr.Select((a) => a.name))}";
+        }
+    }
 
     public void Start()
     {
@@ -48,14 +80,13 @@ internal class TestMB8 : MonoBehaviour
         Log($"tr is: {this.tr.gameObject.name}");
         Log($"space is: {this.space}");
         Log($"testB is: {this.testB}");
-        Log($"test is: {this.testEnum}");
-        if (this.array1 != null)
-        {
-            Log($"array is: [{string.Join(", ", this.array1)}]");
-        }
-        else
-        {
-            Log($"array is null");
-        }
+        Log($"testEnum is: {this.testEnum}");
+        Log($"testString is: {this.testString}");
+        Log($"array1 = {PrintArray(this.array1)}");
+        Log($"spaces = {PrintArray(this.spaces.ToArray())}");
+        Log($"stringArray = {PrintArray(this.stringArray)}");
+        Log($"stringList = {PrintArray(this.stringList.ToArray())}");
+        Log($"transformArray = {PrintObjArray(this.transformArray)}");
+        Log($"objectList = {PrintObjArray(this.objectList.ToArray())}");
     }
-}
+}*/
