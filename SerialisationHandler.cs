@@ -218,7 +218,7 @@ namespace FieldInjector
 
             if (debugLevel >= 3) 
             {
-                expressions = expressions.Prepend(LogExpression("Deserialise: ", nativePtr));
+                expressions = expressions.Prepend(LogExpression($"Deserialise {t}:", nativePtr));
                 expressions = expressions.Append(LogExpression("Deserialise complete: ", nativePtr));
             }
 
@@ -238,7 +238,7 @@ namespace FieldInjector
 
             if (debugLevel >= 3)
             {
-                expressions = expressions.Prepend(LogExpression("Serialise: ", nativePtr));
+                expressions = expressions.Prepend(LogExpression($"Serialise {t}:", nativePtr));
                 expressions = expressions.Append(LogExpression("Serialise complete: ", nativePtr));
             }
 
