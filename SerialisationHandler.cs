@@ -1029,7 +1029,7 @@ namespace FieldInjector
         #region IL2CPP Structs (hacky and version-specific)
 
         [StructLayout(LayoutKind.Sequential)]
-        internal unsafe struct MyIl2CppFieldInfo // Il2CppFieldInfo_24_1
+        internal unsafe struct MyIl2CppFieldInfo
         {
             public IntPtr name; // const char*
             public Il2CppTypeStruct* type; // const
@@ -1039,7 +1039,7 @@ namespace FieldInjector
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        internal unsafe struct MyIl2CppClass // Il2CppClass_24_1_B
+        internal unsafe struct MyIl2CppClass
         {
             // The following fields are always valid for a Il2CppClass structure
             public Il2CppImage* image; // const
@@ -1078,6 +1078,8 @@ namespace FieldInjector
             public Il2CppClass** typeHierarchy; // not const; Initialized in SetupTypeHierachy
             // End initialization required fields
 
+            public IntPtr unity_user_data;
+
             public uint initializationExceptionGCHandle;
 
             public uint cctor_started;
@@ -1088,7 +1090,7 @@ namespace FieldInjector
             private ulong cctor_thread;
 
             // Remaining fields are always valid except where noted
-            public /*GenericContainerIndex*/ int genericContainerIndex;
+            public /*GenericContainerIndex*/ IntPtr genericContainerIndex;
             public uint instance_size;
             public uint actualSize;
             public uint element_size;
