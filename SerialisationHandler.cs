@@ -62,8 +62,43 @@ namespace FieldInjector
             InjectRecursive(t, debugLevel);
         }
 
+        private static Stack<Type> dependencyStack = new Stack<Type>();
+        private static void InjectDependencies(Type t, int debugLevel = 0)
+        {
+            if (dependencyStack.Contains(t))
+            {
+                return;
+            }
+
+            dependencyStack.Push(t);
+
+            // Try to built a set of dependent types
+            var fields = t.GetFields(
+                BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+
+            foreach (var field in fields)
+            {
+                var fieldType = field.FieldType;
+                // 1. If it's an array, replace the fieldtype with the array
+                if (fieldType.IsArray)
+                    fieldType = fieldType.GetElementType();
+                // 2. Ignore primitive types
+                if (fieldType.IsPrimitive) continue;
+                // 3. Ignore already injected types
+                if (GetClassPointerForType(fieldType) != IntPtr.Zero) continue;
+                // 4. Ignore the type we're injecting dependencies for
+                if (fieldType == t) continue;
+
+                InjectRecursive(fieldType, debugLevel);
+                InjectDependencies(t, debugLevel);
+            }
+
+            dependencyStack.Pop();
+        }
+
         private static List<SerialisedField> InjectRecursive(Type t, int debugLevel)
         {
+            if (t.Namespace != null && t.Namespace.StartsWith("System")) return null;
             if (t == typeof(MonoBehaviour) || t == typeof(ScriptableObject) || t == typeof(UnityEngine.Object) || t == null)
             {
                 return null;
@@ -73,6 +108,8 @@ namespace FieldInjector
             {
                 return fields;
             }
+            
+            InjectDependencies(t, debugLevel);
 
             fields = InjectRecursive(t.BaseType, debugLevel);
             if (fields == null) { fields = new List<SerialisedField>(); }
