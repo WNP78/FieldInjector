@@ -14,6 +14,7 @@ using UnhollowerBaseLib.Runtime.VersionSpecific.Type;
 using UnhollowerRuntimeLib;
 using UnityEngine;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using UnhollowerBaseLib.Runtime.VersionSpecific.Class;
 using UnhollowerBaseLib.Runtime.VersionSpecific.MethodInfo;
 using System.Threading;
@@ -32,24 +33,46 @@ namespace FieldInjector
         {
             foreach (Type t in types)
             {
-                // TODO: Inline parts of the inject into here so we can handle dependencies correctly
-                InjectRecursive(t, debugLevel);
+                // Phase 1: Inject the types
+                InjectRecursive1stStage(t, debugLevel);
+            }
+
+            foreach (Type t in types)
+            {
+                // Phase 2: Inject the fields and set up serialization hooks
+                InjectRecursive2ndStage(t, debugLevel);
             }
         }
 
         [Obsolete("Use InjectTypes")]
         public static void Inject<T>(int debugLevel = 0) where T : MonoBehaviour
         {
-            InjectRecursive(typeof(T), debugLevel);
+            InjectRecursive1stStage(typeof(T), debugLevel);
+            InjectRecursive2ndStage(typeof(T), debugLevel);
         }
 
         [Obsolete("Use InjectTypes")]
         public static void Inject(Type t, int debugLevel = 0)
         {
-            InjectRecursive(t, debugLevel);
+            InjectRecursive1stStage(t, debugLevel);
+            InjectRecursive2ndStage(t, debugLevel);
+        }
+        
+        private static void InjectRecursive1stStage(Type t, int debugLevel)
+        {
+            if (t.Namespace != null && t.Namespace.StartsWith("System")) return;
+            if (t == typeof(MonoBehaviour) || t == typeof(ScriptableObject) || t == typeof(UnityEngine.Object) ||
+                t == null)
+            {
+                return;
+            }
+            
+            InjectRecursive1stStage(t.BaseType, debugLevel);
+
+            InjectClassFirstStage(t, debugLevel);
         }
 
-        private static List<SerialisedField> InjectRecursive(Type t, int debugLevel)
+        private static List<SerialisedField> InjectRecursive2ndStage(Type t, int debugLevel)
         {
             if (t.Namespace != null && t.Namespace.StartsWith("System")) return null;
             if (t == typeof(MonoBehaviour) || t == typeof(ScriptableObject) || t == typeof(UnityEngine.Object) || t == null)
@@ -62,7 +85,7 @@ namespace FieldInjector
                 return fields;
             }
             
-            fields = InjectRecursive(t.BaseType, debugLevel);
+            fields = InjectRecursive2ndStage(t.BaseType, debugLevel);
             if (fields == null) { fields = new List<SerialisedField>(); }
             else { fields = new List<SerialisedField>(fields); }
 
@@ -72,22 +95,13 @@ namespace FieldInjector
             return fields;
         }
 
-        private static SerialisedField[] InjectClassImpl(Type t, int debugLevel, List<SerialisedField> baseFields)
+        private static void InjectClassFirstStage(Type t, int debugLevel)
         {
+            Log($"Injecting first-stage serialisation for type {t}", 1);
             if (Util.GetClassPointerForType(t) != IntPtr.Zero)
             {
                 throw new InvalidOperationException($"Type {t} already injected in IL2CPP - cannot inject serialisation");
             }
-
-            void Log(string message, int level)
-            {
-                if (debugLevel >= level)
-                {
-                    Msg(message);
-                }
-            }
-
-            Log($"Injecting serialisation for type {t}", 1);
 
             // Inject class and get a reference to it.
             ClassInjector.RegisterTypeInIl2CppWithInterfaces(t, false, typeof(ISerializationCallbackReceiver));
@@ -104,6 +118,23 @@ namespace FieldInjector
 
             // fix finalizer
             FixFinaliser(klass);
+        }
+
+        private static SerialisedField[] InjectClassImpl(Type t, int debugLevel, List<SerialisedField> baseFields)
+        {
+            void Log(string message, int level)
+            {
+                if (debugLevel >= level)
+                {
+                    Msg(message);
+                }
+            }
+
+            Log($"Injecting second-stage serialisation for type {t}", 1);
+            
+            var baseKlassPtr = (MyIl2CppClass*)Util.GetClassPointerForType(t.BaseType);
+            var klassPtr = (MyIl2CppClass*)Util.GetClassPointerForType(t, bypassEnums: true);
+            var klass = Wrap((Il2CppClass*)klassPtr);
 
             // Select serialisable fields, make serialiser classes.
             var bflags = BindingFlags.Instance | BindingFlags.DeclaredOnly;

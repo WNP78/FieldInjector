@@ -305,17 +305,18 @@ namespace FieldInjector
             {
                 // for normal struct types
                 // new Il2CppSystem.Object(ptr).Unbox<T>()
+
+                // Il2Cpp struct
                 var ctor = typeof(Il2CppSystem.Object).GetConstructor(new Type[] { typeof(IntPtr) });
                 var unbox = typeof(Il2CppSystem.Object).GetMethod("Unbox")
                                 .MakeGenericMethod(this.targetType);
 
                 Expression res = Expression.Call(Expression.New(ctor, nativePtr), unbox);
-
+                
                 if (res.Type != this.field.FieldType)
                 {
                     res = Expression.Convert(res, this.field.FieldType);
                 }
-
                 return res;
             }
         }

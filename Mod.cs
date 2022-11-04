@@ -13,9 +13,42 @@ namespace FieldInjector
 {
     internal class Mod : MelonMod
     {
+        private unsafe void LogClassStuff(MyIl2CppClass* c)
+        {
+            MelonLogger.Msg($"c has {c->method_count} methods");
+            MelonLogger.Msg($"this_arg.type: {c->this_arg.type}");
+            MelonLogger.Msg($"{c->this_arg.IsByRef}");
+            MelonLogger.Msg($"{c->this_arg.mods_byref_pin}");
+            MelonLogger.Msg($"by_val_arg.type: {c->byval_arg.type}");
+            MelonLogger.Msg($"{c->byval_arg.IsByRef}");
+            MelonLogger.Msg($"{c->byval_arg.mods_byref_pin}");
+            
+            for (int i = 0; i < c->method_count; i++)
+            {
+                MyMethodInfo* methodInfo = (MyMethodInfo*)c->methods[i];
+                var namePtr = methodInfo->name;
+                string name = Marshal.PtrToStringAnsi(namePtr);
+                if (name == ".ctor")
+                {
+                    MelonLogger.Msg($"ctor takes {methodInfo->parameters_count} parameters");
+                    for (int j = 0; j < methodInfo->parameters_count; j++)
+                    {
+                        MyIl2CppType* param = methodInfo->parameters[j];
+                        MelonLogger.Msg($"param {j}: {param->type}");
+                    }
+                }
+            }
+        }
         public override void OnApplicationStart()
         {
             //SerialisationHandler.Inject<TestMB8>(debugLevel: 5);
+            unsafe
+            {
+                MyIl2CppClass* v3 = (MyIl2CppClass*)Il2CppClassPointerStore<Vector3>.NativeClassPtr;
+                LogClassStuff(v3);
+                MyIl2CppClass* mb = (MyIl2CppClass*)Il2CppClassPointerStore<MonoBehaviour>.NativeClassPtr;
+                LogClassStuff(mb);
+            }
         }
     }
 

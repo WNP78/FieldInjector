@@ -18,8 +18,6 @@ using System.Runtime.InteropServices;
 
 [assembly: Guid("82c7a0e0-36ec-4675-bb8c-ededa0f92dfa")]
 
-[assembly: MelonGame("Stress Level Zero", "BONEWORKS")]
-
 [assembly: MelonInfo(typeof(Mod), "FieldInjector", "1.0", author: "WNP78")]
 
 [assembly: MelonPriority(-100)]

@@ -138,10 +138,17 @@ namespace FieldInjector
         public byte mods_byref_pin;
         /*unsigned int attrs    : 16; /* param attributes or field flags #1#
         Il2CppTypeEnum type     : 8;
-        unsigned int num_mods : 6;  /* max 64 modifiers follow at the end #1#
+        unsigned int num_mods : 5;  /* max 32 modifiers follow at the end #1#
         unsigned int byref    : 1;
         unsigned int pinned   : 1;  /* valid when included in a local var signature #1#*/
         //MonoCustomMod modifiers [MONO_ZERO_LEN_ARRAY]; /* this may grow */
+        public bool IsByRef
+        {
+            get
+            {
+                return (mods_byref_pin >> 5 & 1) == 1;
+            }
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -151,5 +158,44 @@ namespace FieldInjector
         public int position;
         public uint token;
         public Il2CppTypeStruct* parameter_type; // const
+    }
+    
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct MyMethodInfo
+    {
+        public IntPtr methodPointer; // Il2CppMethodPointer
+        public IntPtr virtualMethodPointer; // Il2CppMethodPointer
+        public IntPtr invoker_method; // InvokerMethod
+        public IntPtr name; // const char*
+        public MyIl2CppClass* klass;
+        public MyIl2CppType* return_type;
+        public MyIl2CppType** parameters;
+
+        //union
+        //{
+        //    const Il2CppRGCTXData* rgctx_data; /* is_inflated is true and is_generic is false, i.e. a generic instance method */
+        //    Il2CppMetadataMethodDefinitionHandle methodMetadataHandle;
+        //};
+        public IntPtr rgctx_data; // just making it an intptr since that's the max size
+
+        /* note, when is_generic == true and is_inflated == true the method represents an uninflated generic method on an inflated type. */
+        //union
+        //{
+        //    const Il2CppGenericMethod* genericMethod; /* is_inflated is true */
+        //    Il2CppMetadataGenericContainerHandle genericContainerHandle; /* is_inflated is false and is_generic is true */
+        //};
+        public IntPtr genericMethod;
+
+        public uint token;
+        public ushort flags;
+        public ushort iflags;
+        public ushort slot;
+        public byte parameters_count;
+        //uint8_t is_generic : 1; /* true if method is a generic method definition */
+        //uint8_t is_inflated : 1; /* true if declaring_type is a generic instance or if method is a generic instance*/
+        //uint8_t wrapper_type : 1; /* always zero (MONO_WRAPPER_NONE) needed for the debugger */
+        //uint8_t has_full_generic_sharing_signature : 1;
+        //uint8_t indirect_call_via_invokers : 1;
+        public byte bitfield;
     }
 }
