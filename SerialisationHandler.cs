@@ -25,7 +25,7 @@ namespace FieldInjector
     public static unsafe class SerialisationHandler
     {
         #region Simple Action<IntPtr> Invoker
-        private static IntPtr invokerPtr;
+        private static readonly IntPtr invokerPtr;
 
         static SerialisationHandler()
         {
@@ -62,38 +62,45 @@ namespace FieldInjector
             InjectRecursive(t, debugLevel);
         }
 
-        private static Stack<Type> dependencyStack = new Stack<Type>();
-        private static void InjectDependencies(Type t, int debugLevel = 0)
+        private struct TypeInjection
         {
-            if (dependencyStack.Contains(t))
+            public Type type;
+            public IntPtr? injected;
+            public SerialisedField[] fields;
+        }
+
+        private static SerialisedField[] GetFieldsToInject(Type t)
+        {
+            // TODO - add SerialisedFieldAttribute handling
+            const BindingFlags bflags = BindingFlags.Instance | BindingFlags.DeclaredOnly;
+            return t.GetFields(bflags | BindingFlags.Public)
+                .Where(field => !field.IsNotSerialized)
+                .Select(field => TrySerialise(field))
+                .Where(field => field != null)
+                .ToArray();
+        }
+
+        private static List<TypeInjection> GatherTypes(Type[] inTypes)
+        {
+            var result = new List<TypeInjection>();
+
+            foreach (var inType in inTypes)
             {
-                return;
+                var fields = GetFieldsToInject(inType);
+                result.Add(new TypeInjection() 
+                {
+                    type = inType,
+                    fields = fields,
+                    injected = default,
+                });
+
+                foreach (var f in fields)
+                {
+                    
+                }
             }
 
-            dependencyStack.Push(t);
-
-            // Try to built a set of dependent types
-            var fields = t.GetFields(
-                BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-
-            foreach (var field in fields)
-            {
-                var fieldType = field.FieldType;
-                // 1. If it's an array, replace the fieldtype with the array
-                if (fieldType.IsArray)
-                    fieldType = fieldType.GetElementType();
-                // 2. Ignore primitive types
-                if (fieldType.IsPrimitive) continue;
-                // 3. Ignore already injected types
-                if (GetClassPointerForType(fieldType) != IntPtr.Zero) continue;
-                // 4. Ignore the type we're injecting dependencies for
-                if (fieldType == t) continue;
-
-                InjectRecursive(fieldType, debugLevel);
-                InjectDependencies(t, debugLevel);
-            }
-
-            dependencyStack.Pop();
+            return result;
         }
 
         private static List<SerialisedField> InjectRecursive(Type t, int debugLevel)
@@ -108,8 +115,6 @@ namespace FieldInjector
             {
                 return fields;
             }
-            
-            InjectDependencies(t, debugLevel);
 
             fields = InjectRecursive(t.BaseType, debugLevel);
             if (fields == null) { fields = new List<SerialisedField>(); }
@@ -190,7 +195,7 @@ namespace FieldInjector
 
                 var nativeField = Wrap((Il2CppFieldInfo*)(fieldsStore + numBaseFields + i));
                 field.FillFieldInfoStruct(nativeField, (Il2CppClass*)klassPtr, ref offset);
-                field.NativeField = nativeField.Pointer;
+                field.NativeFieldInfo = nativeField.Pointer;
             }
 
             // Assign the field array
@@ -359,21 +364,48 @@ namespace FieldInjector
             return null;
         }
 
+        /// <summary>
+        /// Abstract base class to handle injecting a single field.
+        /// Subclasses of this inject certain types of fields, like string, struct, object etc.
+        /// </summary>
         private abstract class SerialisedField
         {
-            private FieldInfo field;
+            /// <summary>
+            /// The managed field to be injected.
+            /// </summary>
+            private readonly FieldInfo managedField;
 
-            protected abstract IntPtr fieldType { get; }
+            /// <summary>
+            /// This is a pointer to the IL2CPP type of the field that will be injected.
+            /// This doesn't have to correspond directly to the mono type, as long as the expressions can convert between the two.
+            /// </summary>
+            /// <value>A pointer to an instance of <see cref="MyIl2CppType"/>.</value>
+            protected abstract IntPtr NativeFieldType { get; }
 
-            public IntPtr NativeField { get; set; }
+            /// <summary>
+            /// Pointer to the native field info.
+            /// </summary>
+            /// <value>Pointer to <see cref="MyIl2CppFieldInfo"/> instance.</value>
+            public IntPtr NativeFieldInfo { get; set; }
 
-            public FieldInfo ManagedField => this.field;
+            /// <summary>
+            /// The managed field.
+            /// </summary>
+            public FieldInfo ManagedField => this.managedField;
 
-            protected virtual Type targetType => this.field.FieldType;
+            /// <summary>
+            /// The type of the managed field. This is the type of the "mono" in MonoToNative and NativeToMono expressions.
+            /// </summary>
+            protected virtual Type ManagedFieldType => this.managedField.FieldType;
+
+            /// <summary>
+            /// The type that must be injected before this field can fill its struct
+            /// </summary>
+            public virtual Type InjectionDependency => null;
 
             protected SerialisedField(FieldInfo field)
             {
-                this.field = field;
+                this.managedField = field;
             }
 
             protected abstract Expression GetNativeToMonoExpression(Expression nativePtr);
@@ -396,7 +428,7 @@ namespace FieldInjector
                  * fieldPtr = il2cpp_field_get_value_object(nativeFieldInfo, nativePtr);
                  * monoObj.field = fieldPtr != IntPtr.Zero ? NativeToMono(fieldPtr) : default;
                 */
-                if (this.NativeField == IntPtr.Zero)
+                if (this.NativeFieldInfo == IntPtr.Zero)
                 {
                     throw new InvalidOperationException("Something went very wrong");
                 }
@@ -405,17 +437,17 @@ namespace FieldInjector
 
                 Expression fieldValuePtr = Expression.Call(
                     get_value,
-                    Expression.Constant(this.NativeField),
+                    Expression.Constant(this.NativeFieldInfo),
                     nativePtr);
 
                 yield return Expression.Assign(fieldPtr, fieldValuePtr);
 
                 Expression hasValue = Expression.NotEqual(fieldPtr, Expression.Constant(IntPtr.Zero));
 
-                yield return Expression.Assign(Expression.Field(monoObj, this.field),
+                yield return Expression.Assign(Expression.Field(monoObj, this.managedField),
                     Expression.Condition(hasValue,
                         this.GetNativeToMonoExpression(fieldPtr),
-                        Expression.Default(this.field.FieldType)
+                        Expression.Default(this.managedField.FieldType)
                         )
                     );
             }
@@ -427,18 +459,18 @@ namespace FieldInjector
                 // refType:
                 // field_set_value_object(nativePtr, this.NativeField, monoObj.field != null ? MonoToNative(monoObj.field) : IntPtr.Zero)
 
-                if (this.NativeField == IntPtr.Zero)
+                if (this.NativeFieldInfo == IntPtr.Zero)
                 {
                     throw new InvalidOperationException("Something went very wrong");
                 }
 
                 MethodInfo set_value = ((Action<IntPtr, IntPtr, IntPtr>)field_set_value_object).Method;
 
-                Expression monoValue = Expression.Field(monoObj, this.field);
+                Expression monoValue = Expression.Field(monoObj, this.managedField);
 
                 Expression fieldValuePtr = this.GetMonoToNativeExpression(monoValue);
 
-                if (!this.field.FieldType.IsValueType)
+                if (!this.managedField.FieldType.IsValueType)
                 {
                     fieldValuePtr = Expression.Condition(
                         Expression.NotEqual(monoValue, Expression.Constant(null)),
@@ -448,7 +480,7 @@ namespace FieldInjector
 
                 yield return Expression.Call(set_value, 
                     nativePtr,
-                    Expression.Constant(this.NativeField),
+                    Expression.Constant(this.NativeFieldInfo),
                     fieldValuePtr);
             }
 
@@ -488,11 +520,11 @@ namespace FieldInjector
 
             public void FillFieldInfoStruct(INativeFieldInfoStruct infoOut, Il2CppClass* klassPtr, ref int offset)
             {
-                infoOut.Name = Marshal.StringToHGlobalAnsi(this.field.Name);
+                infoOut.Name = Marshal.StringToHGlobalAnsi(this.managedField.Name);
                 infoOut.Parent = klassPtr;
 
                 var typePtr = (MyIl2CppType*)Marshal.AllocHGlobal(Marshal.SizeOf<MyIl2CppType>());
-                *typePtr = *(MyIl2CppType*)this.fieldType;
+                *typePtr = *(MyIl2CppType*)this.NativeFieldType;
 
                 typePtr->attrs = (ushort)Il2CppSystem.Reflection.FieldAttributes.Public;
 
@@ -508,12 +540,12 @@ namespace FieldInjector
 
             public override string ToString()
             {
-                return this.GetType().Name + ":" + this.targetType;
+                return this.GetType().Name + ":" + this.ManagedFieldType;
             }
 
             private class ObjectField : SerialisedField
             {
-                protected override IntPtr fieldType => il2cpp_class_get_type(GetClassPointerForType(this.targetType));
+                protected override IntPtr NativeFieldType => il2cpp_class_get_type(GetClassPointerForType(this.ManagedFieldType));
 
                 public override int GetFieldSize(out int align)
                 {
@@ -525,7 +557,7 @@ namespace FieldInjector
 
                 protected override Expression GetNativeToMonoExpression(Expression nativePtr)
                 {
-                    var ctor = this.targetType.GetConstructor(new Type[] { typeof(IntPtr) });
+                    var ctor = this.ManagedFieldType.GetConstructor(new Type[] { typeof(IntPtr) });
                     return Expression.New(ctor, nativePtr);
                 }
 
@@ -538,7 +570,7 @@ namespace FieldInjector
 
             private class StringField : SerialisedField
             {
-                protected override IntPtr fieldType => il2cpp_class_get_type(Il2CppClassPointerStore<string>.NativeClassPtr);
+                protected override IntPtr NativeFieldType => il2cpp_class_get_type(Il2CppClassPointerStore<string>.NativeClassPtr);
 
                 public StringField(FieldInfo field) : base(field) { }
 
@@ -565,16 +597,16 @@ namespace FieldInjector
             {
                 public StructField(FieldInfo field) : base(field)
                 {
-                    if (base.targetType.IsEnum)
+                    if (base.ManagedFieldType.IsEnum)
                     {
-                        this._serialisedType = base.targetType.GetEnumUnderlyingType();
+                        this._serialisedType = base.ManagedFieldType.GetEnumUnderlyingType();
                     }
                     else
                     {
-                        this._serialisedType = base.targetType;
+                        this._serialisedType = base.ManagedFieldType;
                     }
 
-                    this.fieldClass = GetClassPointerForType(this.targetType);
+                    this.fieldClass = GetClassPointerForType(this.ManagedFieldType);
                     this._fieldType = il2cpp_class_get_type(this.fieldClass);
                     this.tempPtr = Expression.Parameter(typeof(IntPtr), "tempStorage");
                 }
@@ -587,9 +619,9 @@ namespace FieldInjector
 
                 private Type _serialisedType;
 
-                protected override IntPtr fieldType => this._fieldType;
+                protected override IntPtr NativeFieldType => this._fieldType;
 
-                protected override Type targetType => this._serialisedType;
+                protected override Type ManagedFieldType => this._serialisedType;
 
                 public unsafe override int GetFieldSize(out int align)
                 {
@@ -622,18 +654,18 @@ namespace FieldInjector
                 {
                     var freeMethod = new Action<IntPtr>(Marshal.FreeHGlobal).Method;
 
-                    if (this.NativeField == IntPtr.Zero)
+                    if (this.NativeFieldInfo == IntPtr.Zero)
                     {
                         throw new InvalidOperationException("Something went very wrong");
                     }
 
-                    Expression monoValue = Expression.Field(monoObj, this.field);
+                    Expression monoValue = Expression.Field(monoObj, this.managedField);
 
                     MethodInfo setValue = ((Action<int, IntPtr, IntPtr>)SetValue).Method
                         .GetGenericMethodDefinition()
                         .MakeGenericMethod(monoValue.Type);
 
-                    yield return Expression.Call(setValue, monoValue, nativePtr, Expression.Constant(this.NativeField));
+                    yield return Expression.Call(setValue, monoValue, nativePtr, Expression.Constant(this.NativeFieldInfo));
                     //yield break;
                 }
 
@@ -643,13 +675,13 @@ namespace FieldInjector
                     // new Il2CppSystem.Object(ptr).Unbox<T>()
                     var ctor = typeof(Il2CppSystem.Object).GetConstructor(new Type[] { typeof(IntPtr) });
                     var unbox = typeof(Il2CppSystem.Object).GetMethod("Unbox")
-                                    .MakeGenericMethod(this.targetType);
+                                    .MakeGenericMethod(this.ManagedFieldType);
 
                     Expression res = Expression.Call(Expression.New(ctor, nativePtr), unbox);
 
-                    if (res.Type != this.field.FieldType)
+                    if (res.Type != this.managedField.FieldType)
                     {
-                        res = Expression.Convert(res, this.field.FieldType);
+                        res = Expression.Convert(res, this.managedField.FieldType);
                     }
 
                     return res;
@@ -682,7 +714,7 @@ namespace FieldInjector
 
                 public ArrayField(FieldInfo field) : this(field.FieldType.GetElementType(), field) { }
 
-                protected override IntPtr fieldType => this._fieldType;
+                protected override IntPtr NativeFieldType => this._fieldType;
 
                 protected override Expression GetMonoToNativeExpression(Expression monoObj)
                 {
@@ -694,7 +726,7 @@ namespace FieldInjector
                     var ctor = this._proxyType.GetConstructor(new Type[] { typeof(IntPtr) });
                     Expression cppList = Expression.New(ctor, nativePtr);
 
-                    return ConvertListToMono(cppList, this.field.FieldType);
+                    return ConvertListToMono(cppList, this.managedField.FieldType);
                 }
 
                 public static Expression ConvertListToMono(Expression cppList, Type monoType)
@@ -821,7 +853,7 @@ namespace FieldInjector
                 {
                     var ctor = this._proxyType.GetConstructor(new Type[] { typeof(IntPtr) });
                     Expression cppList = Expression.New(ctor, nativePtr);
-                    return ListToManaged(cppList, this.field.FieldType);
+                    return ListToManaged(cppList, this.managedField.FieldType);
                 }
 
                 public static Expression ListToCpp(Expression list, Type cppType)
@@ -936,6 +968,11 @@ namespace FieldInjector
 
         private static readonly StaticVoidIntPtrDelegate FinalizeDelegate = Finalize;
 
+        /// <summary>
+        /// This is an improved version of the Unhollower Finalizer that checks if the managed gcHandle is null before trying to free it.
+        /// It's run when the IL2CPP object is garbage collected.
+        /// </summary>
+        /// <param name="ptr">Pointer to the il2cpp object.</param>
         private static void Finalize(IntPtr ptr)
         {
             var gcHandle = ClassInjectorBase.GetGcHandlePtrFromIl2CppObject(ptr);
@@ -947,6 +984,12 @@ namespace FieldInjector
 
         #region Utility
 
+        /// <summary>
+        /// Returns an inline expression that logs the value of an expression to the console.
+        /// </summary>
+        /// <param name="msg"></param>
+        /// <param name="ex"></param>
+        /// <returns></returns>
         private static Expression LogExpression(string msg, Expression ex)
         {
             var log = ((Action<string>)Msg).Method;
@@ -967,6 +1010,12 @@ namespace FieldInjector
             return Expression.Call(log, Expression.Call(concat, Expression.Constant(msg), str));
         }
 
+        /// <summary>
+        /// Aligns an address or number to a specific alignment by increasing it until it is a multiple of the alignment.
+        /// </summary>
+        /// <param name="value">The value to be aligned</param>
+        /// <param name="alignment">The alignment</param>
+        /// <returns>The aligned value.</returns>
         private static int AlignTo(int value, int alignment)
         {
             if (alignment > 0)
@@ -981,6 +1030,12 @@ namespace FieldInjector
             return value;
         }
 
+        /// <summary>
+        /// Gets the size of an il2cpp type. This is a c# translation of an il2cpp internal method.
+        /// </summary>
+        /// <param name="type"></param>
+        /// <param name="align"></param>
+        /// <returns></returns>
         private static unsafe int GetTypeSize(INativeTypeStruct type, out uint align)
         {
             // TODO: (FieldLayout.cpp) FieldLayout::GetTypeSizeAndAlignment
@@ -1037,12 +1092,23 @@ namespace FieldInjector
             }
         }
 
+        /// <summary>
+        /// Gets the class pointer for a type. Has some extra logic over just accessing Il2CppClassPointerStore.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
         private static IntPtr GetClassPointerForType<T>()
         {
             if (typeof(T) == typeof(void)) { return Il2CppClassPointerStore<Il2CppSystem.Void>.NativeClassPtr; }
             return Il2CppClassPointerStore<T>.NativeClassPtr;
         }
 
+        /// <summary>
+        /// Gets the class pointer for the corresponding il2cpp type to a managed type. 
+        /// </summary>
+        /// <param name="type">The mananged type to find the class pointer for.</param>
+        /// <param name="bypassEnums">Whether to look for enum types even though they should be serialised as their underlying types.</param>
+        /// <returns>A pointer to <see cref="MyIl2CppClass"/>.</returns>
         private static IntPtr GetClassPointerForType(Type type, bool bypassEnums = false)
         {
             if (type == typeof(void)) { return Il2CppClassPointerStore<Il2CppSystem.Void>.NativeClassPtr; }
@@ -1055,6 +1121,11 @@ namespace FieldInjector
             return (IntPtr)typeof(Il2CppClassPointerStore<>).MakeGenericType(type).GetField("NativeClassPtr").GetValue(null);
         }
 
+        /// <summary>
+        /// Sets the class pointer for a type in unhollower's store.
+        /// </summary>
+        /// <param name="type">The managed type</param>
+        /// <param name="value">A pointer to the <see cref="MyIl2CppClass"/></param>
         internal static void SetClassPointerForType(Type type, IntPtr value)
         {
             typeof(Il2CppClassPointerStore<>).MakeGenericType(type)
