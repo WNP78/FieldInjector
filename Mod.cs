@@ -13,13 +13,37 @@ namespace FieldInjector
 {
     internal class Mod : MelonMod
     {
-        public override void OnApplicationStart()
+        public override void OnInitializeMelon()
         {
-            //SerialisationHandler.Inject<TestMB8>(debugLevel: 5);
+            SerialisationHandler.Inject<TestMBSt>(debugLevel: 5);
         }
     }
 
 }
+
+[Serializable]
+internal struct TestStruct
+{
+    public float x;
+    public Vector3 vector;
+    public string str;
+    public GameObject objRef;
+}
+
+internal class TestMBSt : MonoBehaviour
+{
+    public TestStruct myStruct;
+
+    void Awake()
+    {
+        Logging.Msg($"myStruct.x = {this.myStruct.x}");
+        Logging.Msg($"myStruct.vector = {this.myStruct.vector.ToString()}");
+        Logging.Msg($"myStruct.str = {this.myStruct.str}");
+        Logging.Msg($"myStruct.objRef = {(this.myStruct.objRef == null ? "null" : this.myStruct.objRef.name)}");
+    }
+}
+
+
 /*
 internal class TestMB8 : MonoBehaviour
 {

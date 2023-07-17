@@ -46,252 +46,306 @@ namespace FieldInjector
         }
         #endregion
 
-        #region Main Serialiser
+        #region Injection Entrypoint and Dependency processing
 
-        private static readonly Dictionary<Type, List<SerialisedField>> serialisationCache = new Dictionary<Type, List<SerialisedField>>();
-
-        private static Il2CppImage* Image;
-
-        public static void Inject<T>(int debugLevel = 0) where T : MonoBehaviour
+        private static bool IsTypeInjected(Type t)
         {
-            InjectRecursive(typeof(T), debugLevel);
+            return GetClassPointerForType(t) != IntPtr.Zero;
         }
 
-        public static void Inject(Type t, int debugLevel = 0)
+        public static void InjectNew<T>(int debugLevel = 5)
         {
-            InjectRecursive(t, debugLevel);
+            InjectNew(debugLevel, typeof(T));
         }
 
-        private static Stack<Type> dependencyStack = new Stack<Type>();
-        private static void InjectDependencies(Type t, int debugLevel = 0)
+        public static void InjectNew(int debugLevel = 5, params Type[] t)
         {
-            if (dependencyStack.Contains(t))
+            LogLevel = debugLevel;
+
+            var typesToInject = new HashSet<Type>(t);
+
+            Type ProcessFieldType(Type ft)
             {
-                return;
-            }
+                if (ft.IsPrimitive) return null;
 
-            dependencyStack.Push(t);
+                if (typesToInject.Contains(ft)) return null;
 
-            // Try to built a set of dependent types
-            var fields = t.GetFields(
-                BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                if (ft.IsArray) return ProcessFieldType(ft.GetElementType());
 
-            foreach (var field in fields)
-            {
-                var fieldType = field.FieldType;
-                // 1. If it's an array, replace the fieldtype with the array
-                if (fieldType.IsArray)
-                    fieldType = fieldType.GetElementType();
-                // 2. Ignore primitive types
-                if (fieldType.IsPrimitive) continue;
-                // 3. Ignore already injected types
-                if (GetClassPointerForType(fieldType) != IntPtr.Zero) continue;
-                // 4. Ignore the type we're injecting dependencies for
-                if (fieldType == t) continue;
-
-                InjectRecursive(fieldType, debugLevel);
-                InjectDependencies(t, debugLevel);
-            }
-
-            dependencyStack.Pop();
-        }
-
-        private static List<SerialisedField> InjectRecursive(Type t, int debugLevel)
-        {
-            if (t.Namespace != null && t.Namespace.StartsWith("System")) return null;
-            if (t == typeof(MonoBehaviour) || t == typeof(ScriptableObject) || t == typeof(UnityEngine.Object) || t == null)
-            {
-                return null;
-            }
-
-            if (serialisationCache.TryGetValue(t, out var fields))
-            {
-                return fields;
-            }
-            
-            InjectDependencies(t, debugLevel);
-
-            fields = InjectRecursive(t.BaseType, debugLevel);
-            if (fields == null) { fields = new List<SerialisedField>(); }
-            else { fields = new List<SerialisedField>(fields); }
-
-            var result = InjectClassImpl(t, debugLevel, fields);
-            fields.AddRange(result);
-            serialisationCache.Add(t, fields);
-            return fields;
-        }
-
-        private static SerialisedField[] InjectClassImpl(Type t, int debugLevel, List<SerialisedField> baseFields)
-        {
-            if (GetClassPointerForType(t) != IntPtr.Zero)
-            {
-                throw new InvalidOperationException($"Type {t} already injected in IL2CPP - cannot inject serialisation");
-            }
-
-            void Log(string message, int level)
-            {
-                if (debugLevel >= level)
+                if (ft.IsGenericType)
                 {
-                    Msg(message);
+                    var td = ft.GetGenericTypeDefinition();
+                    if (td == typeof(List<>) || td == typeof(Nullable)) return ProcessFieldType(td.GetGenericArguments()[0]);
+                }
+
+                if (IsTypeInjected(ft)) return null;
+
+                return ft;
+            }
+
+            void CollectDependencies(Type ct)
+            {
+                if (serialisationCache.ContainsKey(ct)) { return; }
+                if (typesToInject.Contains(ct)) { return; }
+                typesToInject.Add(ct);
+
+                if (ct.BaseType != null) CollectDependencies(ct.BaseType);
+
+                foreach (var type in ct
+                    .GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .Where(field => !field.IsNotSerialized)
+                    .Select((field) => ProcessFieldType(field.FieldType))
+                    .Where(r => r != null))
+                {
+                    typesToInject.Add(type);
+                    CollectDependencies(type);
                 }
             }
 
-            Log($"Injecting serialisation for type {t}", 1);
+            foreach (var type in t) CollectDependencies(type);
+
+            InjectBatch(typesToInject.ToArray());
+        }
+
+        private struct InjectionProgress
+        {
+            public bool Failed;
+            public MyIl2CppClass* ClassPtr;
+            public SerialisedField[] Result;
+        }
+
+        private static Dictionary<Type, InjectionProgress> injection = new Dictionary<Type, InjectionProgress>();
+
+        private static void InjectBatch(Type[] typesToInject)
+        {
+            injection.Clear();
+            int n = typesToInject.Length;
+
+            Log($"Serialising a batch of {n} types:", 1);
+
+            // reorder the list to ensure that base types are processed first
+            for (int i = 0; i < n; i++)
+            {
+                int index = Array.IndexOf(typesToInject, typesToInject[i].BaseType);
+                if (index != -1 && index < i)
+                {
+                    // swap
+                    (typesToInject[i], typesToInject[index]) = (typesToInject[index], typesToInject[i]);
+                }
+            }
+
+            if (LogLevel >= 2)
+            {
+                foreach (var tti in typesToInject)
+                {
+                    Msg($"  {tti.FullName}");
+                }
+            }
 
             // Inject class and get a reference to it.
-            ClassInjector.RegisterTypeInIl2CppWithInterfaces(t, false, typeof(ISerializationCallbackReceiver));
-            var klassPtr = (MyIl2CppClass*)GetClassPointerForType(t, bypassEnums: true);
-            var klass = Wrap((Il2CppClass*)klassPtr);
-
-            Image = klass.Image;
-
-            // fix unhollower not setting namespace field if there's no namespace
-            if (klassPtr->namespaze == IntPtr.Zero)
+            foreach (var t in typesToInject)
             {
-                klassPtr->namespaze = Marshal.StringToHGlobalAnsi(string.Empty);
-            }
-
-            var baseKlassPtr = (MyIl2CppClass*)GetClassPointerForType(t.BaseType);
-
-            // fix finalizer
-            FixFinaliser(klass);
-
-            // Select serialisable fields, make serialiser classes.
-            var bflags = BindingFlags.Instance | BindingFlags.DeclaredOnly;
-            SerialisedField[] injectedFields =
-                t.GetFields(bflags | BindingFlags.Public)
-                .Where(field => !field.IsNotSerialized)
-                .Select(field => TrySerialise(field))
-                .Where(field => field != null)
-                .ToArray();
-
-            int numBaseFields = baseFields.Count;
-            SerialisedField[] allFields = new SerialisedField[numBaseFields + injectedFields.Length];
-            baseFields.CopyTo(allFields);
-            injectedFields.CopyTo(allFields, numBaseFields);
-
-            // Unhollower uses the last IntPtr of a class for a GCHandle of the managed object - we inject fields before this
-            int offset = (int)klass.ActualSize - IntPtr.Size;
-
-            // Allocate and fill fields array
-            var fieldsStore = (MyIl2CppFieldInfo*)Marshal.AllocHGlobal(allFields.Length * Marshal.SizeOf(typeof(MyIl2CppFieldInfo)));
-
-            // Copy base fields
-            for (int i = 0; i < numBaseFields; i++)
-            {
-                fieldsStore[i] = baseKlassPtr->fields[i];
-            }
-
-            // Create new fields
-            for (int i = 0; i < injectedFields.Length; i++)
-            {
-                var field = injectedFields[i];
-                Log($"[{offset}] Converting field {field.ManagedField} as {field}", 2);
-
-                var nativeField = Wrap((Il2CppFieldInfo*)(fieldsStore + numBaseFields + i));
-                field.FillFieldInfoStruct(nativeField, (Il2CppClass*)klassPtr, ref offset);
-                field.NativeField = nativeField.Pointer;
-            }
-
-            // Assign the field array
-            klassPtr->field_count = (ushort)allFields.Length;
-            klassPtr->fields = fieldsStore;
-
-            Log($"Injected {injectedFields.Length} fields (for a total of {allFields.Length}), changing class size from {klass.ActualSize} to {offset + IntPtr.Size}", 2);
-
-            // Reassign our new size, remembering the last IntPtr.
-            klass.ActualSize = klass.InstanceSize = (uint)(offset + IntPtr.Size);
-            klassPtr->gc_desc = IntPtr.Zero;
-
-            // Preparing to do serialisation - find some info about the ISerializationCallbackReceiver
-            Il2CppClass* callbackRecieverClass = (Il2CppClass*)Il2CppClassPointerStore<ISerializationCallbackReceiver>.NativeClassPtr;
-            var iface = Wrap(callbackRecieverClass);
-
-            int interfaceIndex = 0;
-            for (; interfaceIndex < klass.InterfaceCount; interfaceIndex++)
-            {
-                if (klass.ImplementedInterfaces[interfaceIndex] == callbackRecieverClass)
+                try
                 {
-                    break;
+                    ClassInjector.RegisterTypeInIl2CppWithInterfaces(t, false, typeof(ISerializationCallbackReceiver));
+                    var klassPtr = (MyIl2CppClass*)GetClassPointerForType(t, bypassEnums: true);
+                    var klass = Wrap((Il2CppClass*)klassPtr);
+
+                    // fix for unhollower not setting namespace field if there's no namespace
+                    if (klassPtr->namespaze == IntPtr.Zero)
+                    {
+                        klassPtr->namespaze = Marshal.StringToHGlobalAnsi(string.Empty);
+                    }
+
+                    // fix Finalizer so it doesn't crash
+                    FixFinaliser(klass);
+
+                    injection[t] = new InjectionProgress()
+                    {
+                        Failed = false,
+                        ClassPtr = klassPtr,
+                    };
+                }
+                catch (Exception ex)
+                {
+                    Log($"Failed to do initial injection on type {t.Name}: {ex}", 0);
+                    injection[t] = new InjectionProgress()
+                    {
+                        Failed = true,
+                    };
                 }
             }
 
-            if (interfaceIndex == klass.InterfaceCount)
+            // Do field injection.
+            foreach (var t in typesToInject)
             {
-                throw new InvalidOperationException("Could not find serialisation callbacks interface!");
+                var inj = injection[t];
+
+                try
+                {
+                    var klassPtr = inj.ClassPtr;
+                    var klass = Wrap((Il2CppClass*)klassPtr);
+                    var baseKlassPtr = (MyIl2CppClass*)GetClassPointerForType(t.BaseType);
+
+                    // Select serialisable fields, make serialiser classes.
+                    var bflags = BindingFlags.Instance | BindingFlags.DeclaredOnly;
+                    SerialisedField[] injectedFields =
+                        t.GetFields(bflags | BindingFlags.Public)
+                        .Where(field => !field.IsNotSerialized)
+                        .Select(field => TrySerialise(field))
+                        .Where(field => field != null)
+                        .ToArray();
+
+                    SerialisedField[] baseFields = null;
+
+                    if (injection.TryGetValue(t.BaseType, out var baseInj))
+                    {
+                        baseFields = baseInj.Result;
+                    }
+                    else serialisationCache.TryGetValue(t.BaseType, out baseFields);
+
+                    int numBaseFields = baseFields?.Length ?? 0;
+                    SerialisedField[] allFields = new SerialisedField[numBaseFields + injectedFields.Length];
+                    baseFields?.CopyTo(allFields, 0);
+                    injectedFields.CopyTo(allFields, numBaseFields);
+
+                    // Unhollower uses the last IntPtr of a class for a GCHandle of the managed object - we inject fields before this
+                    int offset = (int)klass.ActualSize - IntPtr.Size;
+
+                    // Allocate and fill fields array
+                    var fieldsStore = (MyIl2CppFieldInfo*)Marshal.AllocHGlobal(allFields.Length * Marshal.SizeOf(typeof(MyIl2CppFieldInfo)));
+
+                    // Copy base fields
+                    for (int i = 0; i < numBaseFields; i++)
+                    {
+                        fieldsStore[i] = baseKlassPtr->fields[i];
+                    }
+
+                    // Create new fields
+                    for (int i = 0; i < injectedFields.Length; i++)
+                    {
+                        var field = injectedFields[i];
+                        Log($"[{offset}] Converting field {field.ManagedField} as {field}", 2);
+
+                        var nativeField = Wrap((Il2CppFieldInfo*)(fieldsStore + numBaseFields + i));
+                        field.FillFieldInfoStruct(nativeField, (Il2CppClass*)klassPtr, ref offset);
+                        field.NativeField = nativeField.Pointer;
+                    }
+
+                    // Assign the field array
+                    klassPtr->field_count = (ushort)allFields.Length;
+                    klassPtr->fields = fieldsStore;
+
+                    Log($"Injected {injectedFields.Length} fields (for a total of {allFields.Length}), changing class size from {klass.ActualSize} to {offset + IntPtr.Size}", 2);
+
+                    // Reassign our new size, remembering the last IntPtr.
+                    klass.ActualSize = klass.InstanceSize = (uint)(offset + IntPtr.Size);
+                    klassPtr->gc_desc = IntPtr.Zero;
+
+                    // Preparing to do serialisation - find some info about the ISerializationCallbackReceiver
+                    Il2CppClass* callbackRecieverClass = (Il2CppClass*)Il2CppClassPointerStore<ISerializationCallbackReceiver>.NativeClassPtr;
+                    var iface = Wrap(callbackRecieverClass);
+
+                    int interfaceIndex = 0;
+                    for (; interfaceIndex < klass.InterfaceCount; interfaceIndex++)
+                    {
+                        if (klass.ImplementedInterfaces[interfaceIndex] == callbackRecieverClass)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (interfaceIndex == klass.InterfaceCount)
+                    {
+                        throw new InvalidOperationException("Could not find serialisation callbacks interface!");
+                    }
+
+                    if (interfaceIndex >= klass.InterfaceOffsetsCount)
+                    {
+                        throw new InvalidOperationException("interface is >= interface offsets count!");
+                    }
+
+                    int interfaceOffset = klass.InterfaceOffsets[interfaceIndex].offset;
+
+                    // Now create the serialisation methods - this code is common to both
+                    var nativePtr = Expression.Parameter(typeof(IntPtr), "nativeObjPtr");
+                    var managedObj = Expression.Variable(t, "managedObj");
+                    var fieldPtr = Expression.Variable(typeof(IntPtr), "fieldPtr");
+
+                    MethodInfo getMonoObjectMethod = ((Func<IntPtr, object>)ClassInjectorBase.GetMonoObjectFromIl2CppPointer).Method;
+                    MethodInfo getGCHandleMethod = ((Func<IntPtr, IntPtr>)ClassInjectorBase.GetGcHandlePtrFromIl2CppObject).Method;
+
+                    Expression[] setupExpressions = new Expression[]
+                    {
+                        // managedObj = ClassInjectorBase.GetMonoObjectFromIl2CppPointer(nativeObjPtr);
+                        Expression.Assign(managedObj,
+                            Expression.Convert(
+                                Expression.Call(getMonoObjectMethod, nativePtr),
+                                t)),
+                    };
+
+                    // Create and inject the deserialiser
+
+                    var expressions = setupExpressions
+                        .Concat(
+                            allFields
+                            .SelectMany(field => field.GetDeserialiseExpression(managedObj, nativePtr, fieldPtr))
+                            );
+
+                    if (LogLevel >= 3)
+                    {
+                        expressions = expressions.Prepend(LogExpression($"Deserialise {t}:", nativePtr));
+                        expressions = expressions.Append(LogExpression("Deserialise complete: ", nativePtr));
+                    }
+
+                    var deserialiseExpression = Expression.Block(
+                        new ParameterExpression[] { managedObj, fieldPtr },
+                        expressions);
+
+                    Log($"Generated deserialiser method:\n{string.Join("\n", deserialiseExpression.Expressions)}", 3);
+
+                    var deserialiseMethod = Expression.Lambda<StaticVoidIntPtrDelegate>(deserialiseExpression, nativePtr);
+                    EmitSerialiserMethod(deserialiseMethod, t, klass, nameof(ISerializationCallbackReceiver.OnAfterDeserialize), iface, interfaceOffset, LogLevel);
+
+                    // Now the serialiser
+                    expressions = setupExpressions.Concat(
+                        allFields
+                        .SelectMany(field => field.GetSerialiseExpression(managedObj, nativePtr)));
+
+                    if (LogLevel >= 3)
+                    {
+                        expressions = expressions.Prepend(LogExpression($"Serialise {t}:", nativePtr));
+                        expressions = expressions.Append(LogExpression("Serialise complete: ", nativePtr));
+                    }
+
+                    var serialiseExpression = Expression.Block(
+                        new ParameterExpression[] { managedObj },
+                        expressions);
+
+                    Log($"Generated serialiser method: \n{string.Join("\n", serialiseExpression.Expressions)}", 3);
+
+                    var serialiseMethod = Expression.Lambda<StaticVoidIntPtrDelegate>(serialiseExpression, nativePtr);
+                    EmitSerialiserMethod(serialiseMethod, t, klass, nameof(ISerializationCallbackReceiver.OnBeforeSerialize), iface, interfaceOffset, LogLevel);
+
+                    serialisationCache[t] = allFields;
+
+                    Log($"Completed serialisation injection for type {t}", 2);
+                }
+                catch (Exception ex)
+                {
+                    Log($"Failed to do field injection on type {t.Name}: {ex}", 0);
+                    inj.Failed = true;
+                }
+
+                injection[t] = inj;
             }
-
-            if (interfaceIndex >= klass.InterfaceOffsetsCount)
-            {
-                throw new InvalidOperationException("interface is >= interface offsets count!");
-            }
-
-            int interfaceOffset = klass.InterfaceOffsets[interfaceIndex].offset;
-
-            // Now create the serialisation methods - this code is common to both
-            var nativePtr = Expression.Parameter(typeof(IntPtr), "nativeObjPtr");
-            var managedObj = Expression.Variable(t, "managedObj");
-            var fieldPtr = Expression.Variable(typeof(IntPtr), "fieldPtr");
-
-            MethodInfo getMonoObjectMethod = ((Func<IntPtr, object>)ClassInjectorBase.GetMonoObjectFromIl2CppPointer).Method;
-            MethodInfo getGCHandleMethod = ((Func<IntPtr, IntPtr>)ClassInjectorBase.GetGcHandlePtrFromIl2CppObject).Method;
-
-            Expression[] setupExpressions = new Expression[]
-            {
-                // managedObj = ClassInjectorBase.GetMonoObjectFromIl2CppPointer(nativeObjPtr);
-                Expression.Assign(managedObj,
-                    Expression.Convert(
-                        Expression.Call(getMonoObjectMethod, nativePtr),
-                        t)),
-            };
-
-            // Create and inject the deserialiser
-
-            var expressions = setupExpressions
-                .Concat(
-                    allFields
-                    .SelectMany(field => field.GetDeserialiseExpression(managedObj, nativePtr, fieldPtr))
-                    );
-
-            if (debugLevel >= 3) 
-            {
-                expressions = expressions.Prepend(LogExpression($"Deserialise {t}:", nativePtr));
-                expressions = expressions.Append(LogExpression("Deserialise complete: ", nativePtr));
-            }
-
-            var deserialiseExpression = Expression.Block(
-                new ParameterExpression[] { managedObj, fieldPtr },
-                expressions);
-
-            Log($"Generated deserialiser method:\n{string.Join("\n", deserialiseExpression.Expressions)}", 3);
-
-            var deserialiseMethod = Expression.Lambda<StaticVoidIntPtrDelegate>(deserialiseExpression, nativePtr);
-            EmitSerialiserMethod(deserialiseMethod, t, klass, nameof(ISerializationCallbackReceiver.OnAfterDeserialize), iface, interfaceOffset, debugLevel);
-
-            // Now the serialiser
-            expressions = setupExpressions.Concat(
-                allFields
-                .SelectMany(field => field.GetSerialiseExpression(managedObj, nativePtr)));
-
-            if (debugLevel >= 3)
-            {
-                expressions = expressions.Prepend(LogExpression($"Serialise {t}:", nativePtr));
-                expressions = expressions.Append(LogExpression("Serialise complete: ", nativePtr));
-            }
-
-            var serialiseExpression = Expression.Block(
-                new ParameterExpression[] { managedObj },
-                expressions);
-
-            Log($"Generated serialiser method: \n{string.Join("\n", serialiseExpression.Expressions)}", 3);
-
-            var serialiseMethod = Expression.Lambda<StaticVoidIntPtrDelegate>(serialiseExpression, nativePtr);
-            EmitSerialiserMethod(serialiseMethod, t, klass, nameof(ISerializationCallbackReceiver.OnBeforeSerialize), iface, interfaceOffset, debugLevel);
-
-            Log($"Completed serialisation injection for type {t}", 2);
-
-            return injectedFields;
         }
+
+        #endregion
+
+        #region Main Serialiser
+
+        private static readonly Dictionary<Type, SerialisedField[]> serialisationCache = new Dictionary<Type, SerialisedField[]>();
 
         private static void FixFinaliser(INativeClassStruct klass)
         {
@@ -947,6 +1001,16 @@ namespace FieldInjector
 
         #region Utility
 
+        internal static int LogLevel = 0;
+
+        internal static void Log(string message, int level)
+        {
+            if (LogLevel >= level)
+            {
+                Msg(message);
+            }
+        }
+
         private static Expression LogExpression(string msg, Expression ex)
         {
             var log = ((Action<string>)Msg).Method;
@@ -1062,158 +1126,5 @@ namespace FieldInjector
         }
 
         #endregion Utility
-
-        #region IL2CPP Structs (hacky and version-specific)
-
-        [StructLayout(LayoutKind.Sequential)]
-        internal unsafe struct MyIl2CppFieldInfo
-        {
-            public IntPtr name; // const char*
-            public Il2CppTypeStruct* type; // const
-            public Il2CppClass* parent; // non-const?
-            public int offset; // If offset is -1, then it's thread static
-            public uint token;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        internal unsafe struct MyIl2CppClass
-        {
-            // The following fields are always valid for a Il2CppClass structure
-            public Il2CppImage* image; // const
-            public IntPtr gc_desc;
-            public IntPtr name; // const char*
-            public IntPtr namespaze; // const char*
-            public MyIl2CppType byval_arg; // not const, no ptr
-            public MyIl2CppType this_arg; // not const, no ptr
-            public Il2CppClass* element_class; // not const
-            public Il2CppClass* castClass; // not const
-            public Il2CppClass* declaringType; // not const
-            public Il2CppClass* parent; // not const
-            public /*Il2CppGenericClass**/ IntPtr generic_class;
-
-            public /*Il2CppTypeDefinition**/
-                IntPtr typeDefinition; // const; non-NULL for Il2CppClass's constructed from type defintions
-
-            public /*Il2CppInteropData**/ IntPtr interopData; // const
-
-            public Il2CppClass* klass; // not const; hack to pretend we are a MonoVTable. Points to ourself
-            // End always valid fields
-
-            // The following fields need initialized before access. This can be done per field or as an aggregate via a call to Class::Init
-            public MyIl2CppFieldInfo* fields; // Initialized in SetupFields
-            public Il2CppEventInfo* events; // const; Initialized in SetupEvents
-            public Il2CppPropertyInfo* properties; // const; Initialized in SetupProperties
-            public Il2CppMethodInfo** methods; // const; Initialized in SetupMethods
-            public Il2CppClass** nestedTypes; // not const; Initialized in SetupNestedTypes
-            public Il2CppClass** implementedInterfaces; // not const; Initialized in SetupInterfaces
-            public Il2CppRuntimeInterfaceOffsetPair* interfaceOffsets; // not const; Initialized in Init
-            public IntPtr static_fields; // not const; Initialized in Init
-
-            public /*Il2CppRGCTXData**/ IntPtr rgctx_data; // const; Initialized in Init
-
-            // used for fast parent checks
-            public Il2CppClass** typeHierarchy; // not const; Initialized in SetupTypeHierachy
-            // End initialization required fields
-
-            public IntPtr unity_user_data;
-
-            public uint initializationExceptionGCHandle;
-
-            public uint cctor_started;
-
-            public uint cctor_finished;
-
-            /*ALIGN_TYPE(8)*/
-            private ulong cctor_thread;
-
-            // Remaining fields are always valid except where noted
-            public /*GenericContainerIndex*/ IntPtr genericContainerIndex;
-            public uint instance_size;
-            public uint actualSize;
-            public uint element_size;
-            public int native_size;
-            public uint static_fields_size;
-            public uint thread_static_fields_size;
-            public int thread_static_fields_offset;
-            public Il2CppClassAttributes flags;
-            public uint token;
-
-            public ushort method_count; // lazily calculated for arrays, i.e. when rank > 0
-            public ushort property_count;
-            public ushort field_count;
-            public ushort event_count;
-            public ushort nested_type_count;
-            public ushort vtable_count; // lazily calculated for arrays, i.e. when rank > 0
-            public ushort interfaces_count;
-            public ushort interface_offsets_count; // lazily calculated for arrays, i.e. when rank > 0
-
-            public byte typeHierarchyDepth; // Initialized in SetupTypeHierachy
-            public byte genericRecursionDepth;
-            public byte rank;
-            public byte minimumAlignment; // Alignment of this type
-            public byte naturalAligment; // Alignment of this type without accounting for packing
-            public byte packingSize;
-
-            // this is critical for performance of Class::InitFromCodegen. Equals to initialized && !has_initialization_error at all times.
-            // Use Class::UpdateInitializedAndNoError to update
-            public byte bitfield_1;
-            /*uint8_t initialized_and_no_error : 1;
-    
-            uint8_t valuetype : 1;
-            uint8_t initialized : 1;
-            uint8_t enumtype : 1;
-            uint8_t is_generic : 1;
-            uint8_t has_references : 1;
-            uint8_t init_pending : 1;
-            uint8_t size_inited : 1;*/
-
-            public byte bitfield_2;
-            /*uint8_t has_finalize : 1;
-            uint8_t has_cctor : 1;
-            uint8_t is_blittable : 1;
-            uint8_t is_import_or_windows_runtime : 1;
-            uint8_t is_vtable_initialized : 1;
-            uint8_t has_initialization_error : 1;*/
-
-            //VirtualInvokeData vtable[IL2CPP_ZERO_LEN_ARRAY];
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct MyIl2CppType
-        {
-            /*union
-            {
-                // We have this dummy field first because pre C99 compilers (MSVC) can only initializer the first value in a union.
-                void* dummy;
-                TypeDefinitionIndex klassIndex; /* for VALUETYPE and CLASS #1#
-                const Il2CppType *type;   /* for PTR and SZARRAY #1#
-                Il2CppArrayType *array; /* for ARRAY #1#
-                //MonoMethodSignature *method;
-                GenericParameterIndex genericParameterIndex; /* for VAR and MVAR #1#
-                Il2CppGenericClass *generic_class; /* for GENERICINST #1#
-            } data;*/
-            public IntPtr data;
-
-            public ushort attrs;
-            public Il2CppTypeEnum type;
-            public byte mods_byref_pin;
-            /*unsigned int attrs    : 16; /* param attributes or field flags #1#
-            Il2CppTypeEnum type     : 8;
-            unsigned int num_mods : 6;  /* max 64 modifiers follow at the end #1#
-            unsigned int byref    : 1;
-            unsigned int pinned   : 1;  /* valid when included in a local var signature #1#*/
-            //MonoCustomMod modifiers [MONO_ZERO_LEN_ARRAY]; /* this may grow */
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        internal unsafe struct MyIl2CppParameterInfo
-        {
-            public IntPtr name; // const char*
-            public int position;
-            public uint token;
-            public Il2CppTypeStruct* parameter_type; // const
-        }
-
-        #endregion IL2CPP Structs (hacky and version-specific)
     }
 }
