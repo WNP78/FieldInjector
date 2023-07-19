@@ -20,13 +20,13 @@ namespace FieldInjector.FieldSerialisers
             return sizeof(IntPtr);
         }
 
-        protected override Expression GetNativeToMonoExpression(Expression nativePtr)
+        protected override Expression GetNativeToManagedExpression(Expression nativePtr)
         {
             var method = ((Func<IntPtr, string>)Il2CppStringToManaged).Method;
             return Expression.Call(method, nativePtr);
         }
 
-        protected override Expression GetMonoToNativeExpression(Expression monoObj)
+        protected override Expression GetManagedToNativeExpression(Expression monoObj)
         {
             var method = ((Func<string, IntPtr>)ManagedStringToIl2Cpp).Method;
             return Expression.Call(method, monoObj);

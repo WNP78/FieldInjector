@@ -150,5 +150,6 @@ public class TestMB8 : MonoBehaviour
         Log($"stringList = {PrintArray(this.stringList.ToArray())}");
         Log($"transformArray = {PrintObjArray(this.transformArray)}");
         Log($"objectList = {PrintObjArray(this.objectList.ToArray())}");
+        Log("");
     }
 }

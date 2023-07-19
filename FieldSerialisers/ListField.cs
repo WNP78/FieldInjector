@@ -12,12 +12,12 @@ namespace FieldInjector.FieldSerialisers
         {
         }
 
-        protected override Expression GetMonoToNativeExpression(Expression monoObj)
+        protected override Expression GetManagedToNativeExpression(Expression monoObj)
         {
             return Expression.Property(ListToCpp(monoObj, _proxyType), "Pointer");
         }
 
-        protected override Expression GetNativeToMonoExpression(Expression nativePtr)
+        protected override Expression GetNativeToManagedExpression(Expression nativePtr)
         {
             var ctor = _proxyType.GetConstructor(new Type[] { typeof(IntPtr) });
             Expression cppList = Expression.New(ctor, nativePtr);

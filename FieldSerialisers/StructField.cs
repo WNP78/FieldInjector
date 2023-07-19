@@ -54,7 +54,7 @@ namespace FieldInjector.FieldSerialisers
             return *(T*)dest;
         }
 
-        protected override Expression GetMonoToNativeExpression(Expression monoValue)
+        protected override Expression GetManagedToNativeExpression(Expression monoValue)
         {
             throw new NotImplementedException();
         }
@@ -86,7 +86,7 @@ namespace FieldInjector.FieldSerialisers
             //yield break;
         }
 
-        protected override Expression GetNativeToMonoExpression(Expression nativePtr)
+        protected override Expression GetNativeToManagedExpression(Expression nativePtr)
         {
             // for normal struct types
             // new Il2CppSystem.Object(ptr).Unbox<T>()

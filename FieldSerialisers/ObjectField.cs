@@ -20,13 +20,13 @@ namespace FieldInjector.FieldSerialisers
         {
         }
 
-        protected override Expression GetNativeToMonoExpression(Expression nativePtr)
+        protected override Expression GetNativeToManagedExpression(Expression nativePtr)
         {
             var ctor = TargetType.GetConstructor(new Type[] { typeof(IntPtr) });
             return Expression.New(ctor, nativePtr);
         }
 
-        protected override Expression GetMonoToNativeExpression(Expression monoObj)
+        protected override Expression GetManagedToNativeExpression(Expression monoObj)
         {
             var prop = typeof(Il2CppSystem.Object).GetProperty("Pointer");
             return Expression.Property(monoObj, prop);

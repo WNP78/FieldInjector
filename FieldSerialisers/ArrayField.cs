@@ -31,91 +31,94 @@ namespace FieldInjector.FieldSerialisers
 
             Log($"elementType = {elementType}", 5);
 
-            _proxyType = typeof(ILCollections.List<>).MakeGenericType(elementType);
-            var classPtr = GetClassPointerForType(_proxyType);
+            this._proxyType = typeof(ILCollections.List<>).MakeGenericType(elementType);
+            var classPtr = GetClassPointerForType(this._proxyType);
 
             Log($"ArrayField List<{elementType.Name}> ptr = {classPtr}", 5);
 
-            _fieldType = il2cpp_class_get_type(classPtr);
+            this._fieldType = il2cpp_class_get_type(classPtr);
         }
 
         public ArrayField(FieldInfo field) : this(field.FieldType.GetElementType(), field)
         {
         }
 
-        protected override IntPtr FieldType => _fieldType;
+        protected override IntPtr FieldType => this._fieldType;
 
-        protected override Expression GetMonoToNativeExpression(Expression monoObj)
+        protected override Expression GetManagedToNativeExpression(Expression managedObj)
         {
-            return ConvertArrayToIl2CppList(monoObj, _proxyType);
+            return ConvertArrayToIl2CppList(managedObj, this._proxyType);
         }
 
-        protected override Expression GetNativeToMonoExpression(Expression nativePtr)
+        protected override Expression GetNativeToManagedExpression(Expression nativePtr)
         {
-            var ctor = _proxyType.GetConstructor(new Type[] { typeof(IntPtr) });
+            var ctor = this._proxyType.GetConstructor(new Type[] { typeof(IntPtr) });
             Expression cppList = Expression.New(ctor, nativePtr);
 
-            return ConvertListToMono(cppList, this.field.FieldType);
+            return ConvertListToManaged(cppList, this.field.FieldType);
         }
 
-        public static Expression ConvertListToMono(Expression cppList, Type monoType)
+        public static Expression ConvertListToManaged(Expression cppList, Type managedType)
         {
-            if (!monoType.IsArray) { throw new ArgumentException("monoType is not an array!"); }
-            Type monoElementType = monoType.GetElementType();
+            if (!managedType.IsArray) { throw new ArgumentException("managedType is not an array!"); }
+            Type managedElementType = managedType.GetElementType();
 
-            if (monoElementType.IsValueType)
+            if (managedElementType.IsValueType)
             {
                 Type cppElementType = cppList.Type.GetGenericArguments()[0];
 
                 MethodInfo convertStructList = ((Func<ILCollections.List<int>, int[]>)ConvertStructList<int, int>)
-                    .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType, cppElementType);
+                    .Method.GetGenericMethodDefinition().MakeGenericMethod(managedElementType, cppElementType);
 
                 return Expression.Call(convertStructList, cppList);
             }
             else
             {
                 MethodInfo convertGeneralList = ((Func<ILCollections.List<int>, int[]>)ConvertGeneralList)
-                    .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType);
+                    .Method.GetGenericMethodDefinition().MakeGenericMethod(managedElementType);
 
                 return Expression.Call(convertGeneralList, cppList);
             }
         }
 
-        public static Expression ConvertArrayToIl2CppList(Expression monoArray, Type cppType)
+        public static Expression ConvertArrayToIl2CppList(Expression managedArray, Type cppType)
         {
             Type cppElementType = cppType.GetGenericArguments()[0];
-            Type monoElementType = monoArray.Type.GetElementType();
+            Type managedElementType = managedArray.Type.GetElementType();
 
             Expression cppList;
 
             if (cppElementType.IsValueType)
             {
                 MethodInfo convertStructArray = ((Func<int[], ILCollections.List<int>>)ConvertStructArray<int, int>)
-                    .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType, cppElementType);
+                    .Method.GetGenericMethodDefinition().MakeGenericMethod(managedElementType, cppElementType);
 
-                cppList = Expression.Call(convertStructArray, monoArray);
+                cppList = Expression.Call(convertStructArray, managedArray);
             }
             else
             {
                 MethodInfo convertGeneralArray = ((Func<int[], ILCollections.List<int>>)ConvertGeneralArray)
-                    .Method.GetGenericMethodDefinition().MakeGenericMethod(monoElementType);
+                    .Method.GetGenericMethodDefinition().MakeGenericMethod(managedElementType);
 
-                cppList = Expression.Call(convertGeneralArray, monoArray);
+                cppList = Expression.Call(convertGeneralArray, managedArray);
             }
 
             var ptr = typeof(Il2CppSystem.Object).GetProperty("Pointer");
             return Expression.Property(cppList, ptr);
         }
 
-        private static TMono[] ConvertStructList<TMono, TCpp>(ILCollections.List<TCpp> cppList)
-            where TMono : unmanaged
+        /// <summary>
+        /// IL2CPP List -> Managed Array
+        /// </summary>
+        private static TManaged[] ConvertStructList<TManaged, TCpp>(ILCollections.List<TCpp> cppList)
+            where TManaged : unmanaged
             where TCpp : unmanaged
         {
-            int size = sizeof(TMono);
+            int size = sizeof(TManaged);
             if (size != sizeof(TCpp)) { throw new ArgumentException("Size mismatch in array copy."); }
 
-            TMono[] res = new TMono[cppList.Count];
-            fixed (TMono* resPtr = res)
+            TManaged[] res = new TManaged[cppList.Count];
+            fixed (TManaged* resPtr = res)
             {
                 for (int i = 0; i < res.Length; i++)
                 {
@@ -126,6 +129,9 @@ namespace FieldInjector.FieldSerialisers
             return res;
         }
 
+        /// <summary>
+        /// IL2CPP List -> Managed Array
+        /// </summary>
         private static T[] ConvertGeneralList<T>(ILCollections.List<T> cppList)
         {
             T[] res = new T[cppList.Count];
@@ -137,16 +143,19 @@ namespace FieldInjector.FieldSerialisers
             return res;
         }
 
-        public static ILCollections.List<TCpp> ConvertStructArray<TMono, TCpp>(TMono[] monoArray)
-            where TMono : unmanaged
+        /// <summary>
+        /// Managed Array -> IL2CPP List
+        /// </summary>
+        public static ILCollections.List<TCpp> ConvertStructArray<TManaged, TCpp>(TManaged[] managedArray)
+            where TManaged : unmanaged
             where TCpp : unmanaged
         {
-            var res = new ILCollections.List<TCpp>(monoArray.Length);
-            fixed (TMono* monoPtr = monoArray)
+            var res = new ILCollections.List<TCpp>(managedArray.Length);
+            fixed (TManaged* managedPtr = managedArray)
             {
-                for (int i = 0; i < monoArray.Length; i++)
+                for (int i = 0; i < managedArray.Length; i++)
                 {
-                    TMono* ptr = &monoPtr[i];
+                    TManaged* ptr = &managedPtr[i];
                     res.Add(*(TCpp*)ptr);
                 }
             }
@@ -154,13 +163,16 @@ namespace FieldInjector.FieldSerialisers
             return res;
         }
 
-        public static ILCollections.List<T> ConvertGeneralArray<T>(T[] monoArray)
+        /// <summary>
+        /// Managed Array -> IL2CPP list
+        /// </summary>
+        public static ILCollections.List<T> ConvertGeneralArray<T>(T[] managedArray)
         {
-            var res = new ILCollections.List<T>(monoArray.Length);
+            var res = new ILCollections.List<T>(managedArray.Length);
 
-            for (int i = 0; i < monoArray.Length; i++)
+            for (int i = 0; i < managedArray.Length; i++)
             {
-                res.Add(monoArray[i]);
+                res.Add(managedArray[i]);
             }
 
             return res;

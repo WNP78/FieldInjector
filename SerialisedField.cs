@@ -28,9 +28,9 @@ namespace FieldInjector
             this.field = field;
         }
 
-        protected abstract Expression GetNativeToMonoExpression(Expression nativePtr);
+        protected abstract Expression GetNativeToManagedExpression(Expression nativePtr);
 
-        protected abstract Expression GetMonoToNativeExpression(Expression monoObj);
+        protected abstract Expression GetManagedToNativeExpression(Expression monoObj);
 
         public virtual IEnumerable<Expression> GetDeserialiseExpression(Expression monoObj, Expression nativePtr, Expression fieldPtr)
         {
@@ -58,7 +58,7 @@ namespace FieldInjector
 
             yield return Expression.Assign(Expression.Field(monoObj, this.field),
                 Expression.Condition(hasValue,
-                    this.GetNativeToMonoExpression(fieldPtr),
+                    this.GetNativeToManagedExpression(fieldPtr),
                     Expression.Default(this.field.FieldType)
                     )
                 );
@@ -80,7 +80,7 @@ namespace FieldInjector
 
             Expression monoValue = Expression.Field(monoObj, this.field);
 
-            Expression fieldValuePtr = this.GetMonoToNativeExpression(monoValue);
+            Expression fieldValuePtr = this.GetManagedToNativeExpression(monoValue);
 
             if (!this.field.FieldType.IsValueType)
             {
