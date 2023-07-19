@@ -1,18 +1,19 @@
-﻿using System;
+﻿using FieldInjector.FieldSerialisers;
+using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using UnhollowerBaseLib.Runtime.VersionSpecific.FieldInfo;
-using static UnhollowerBaseLib.IL2CPP;
 using UnhollowerBaseLib.Runtime;
+using UnhollowerBaseLib.Runtime.VersionSpecific.FieldInfo;
 using static FieldInjector.Util;
+using static UnhollowerBaseLib.IL2CPP;
 
 namespace FieldInjector
 {
-    internal unsafe abstract class SerialisedField
+    internal abstract unsafe class SerialisedField
     {
-        private FieldInfo field;
+        protected FieldInfo field;
 
         protected abstract IntPtr FieldType { get; }
 
@@ -35,7 +36,7 @@ namespace FieldInjector
         {
             // OLD:
             // monoObj.field = NativeToMono(il2cpp_field_get_value_object(nativeFieldInfo, nativePtr));
-            /* New 
+            /* New
              * fieldPtr = il2cpp_field_get_value_object(nativeFieldInfo, nativePtr);
              * monoObj.field = fieldPtr != IntPtr.Zero ? NativeToMono(fieldPtr) : default;
             */
@@ -88,7 +89,6 @@ namespace FieldInjector
                     fieldValuePtr, Expression.Constant(IntPtr.Zero));
             }
 
-
             yield return Expression.Call(set_value,
                 nativePtr,
                 Expression.Constant(this.NativeField),
@@ -96,7 +96,7 @@ namespace FieldInjector
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "il2cpp method wrapper")]
-        private static void field_set_value_object(IntPtr instance, IntPtr field, IntPtr obj)
+        protected static void field_set_value_object(IntPtr instance, IntPtr field, IntPtr obj)
         {
             il2cpp_field_set_value(instance, field, (void*)obj);
         }

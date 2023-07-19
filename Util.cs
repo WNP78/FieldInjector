@@ -2,11 +2,11 @@
 using System.Linq.Expressions;
 using System.Runtime.InteropServices;
 using UnhollowerBaseLib;
-using static MelonLoader.MelonLogger;
-using static UnhollowerBaseLib.Runtime.UnityVersionHandler;
-using static UnhollowerBaseLib.IL2CPP;
 using UnhollowerBaseLib.Runtime;
 using UnhollowerBaseLib.Runtime.VersionSpecific.Type;
+using static MelonLoader.MelonLogger;
+using static UnhollowerBaseLib.IL2CPP;
+using static UnhollowerBaseLib.Runtime.UnityVersionHandler;
 
 namespace FieldInjector
 {
@@ -71,19 +71,23 @@ namespace FieldInjector
                 case Il2CppTypeEnum.IL2CPP_TYPE_I1:
                 case Il2CppTypeEnum.IL2CPP_TYPE_U1:
                     return 1;
+
                 case Il2CppTypeEnum.IL2CPP_TYPE_I2:
                 case Il2CppTypeEnum.IL2CPP_TYPE_U2:
                     return 2;
+
                 case Il2CppTypeEnum.IL2CPP_TYPE_CHAR:
                     return 2; // I think? Il2CppChar being wchar_t probably
                 case Il2CppTypeEnum.IL2CPP_TYPE_I4:
                 case Il2CppTypeEnum.IL2CPP_TYPE_U4:
                 case Il2CppTypeEnum.IL2CPP_TYPE_R4:
                     return 4;
+
                 case Il2CppTypeEnum.IL2CPP_TYPE_I8:
                 case Il2CppTypeEnum.IL2CPP_TYPE_U8:
                 case Il2CppTypeEnum.IL2CPP_TYPE_R8:
                     return 8;
+
                 case Il2CppTypeEnum.IL2CPP_TYPE_I:
                 case Il2CppTypeEnum.IL2CPP_TYPE_U:
                     return 8; // assuming 64-bit, deal with it
@@ -95,6 +99,7 @@ namespace FieldInjector
                 case Il2CppTypeEnum.IL2CPP_TYPE_FNPTR:
                 case Il2CppTypeEnum.IL2CPP_TYPE_PTR:
                     return IntPtr.Size;
+
                 case Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE:
                     var klass1 = Wrap((Il2CppClass*)il2cpp_class_from_il2cpp_type(type.Pointer));
                     if (type.Type == Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE && klass1.EnumType)
@@ -109,6 +114,7 @@ namespace FieldInjector
                     }
 
                     return il2cpp_class_value_size(il2cpp_class_from_il2cpp_type(type.Pointer), ref align);
+
                 case Il2CppTypeEnum.IL2CPP_TYPE_GENERICINST:
                 default:
                     throw new NotImplementedException();

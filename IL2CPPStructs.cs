@@ -1,9 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 using UnhollowerBaseLib.Runtime;
 
 namespace FieldInjector
@@ -23,6 +19,7 @@ namespace FieldInjector
     {
         // The following fields are always valid for a Il2CppClass structure
         public Il2CppImage* image; // const
+
         public IntPtr gc_desc;
         public IntPtr name; // const char*
         public IntPtr namespaze; // const char*
@@ -32,18 +29,18 @@ namespace FieldInjector
         public Il2CppClass* castClass; // not const
         public Il2CppClass* declaringType; // not const
         public Il2CppClass* parent; // not const
-        public /*Il2CppGenericClass**/ IntPtr generic_class;
+        public IntPtr generic_class;
 
-        public /*Il2CppTypeDefinition**/
-            IntPtr typeDefinition; // const; non-NULL for Il2CppClass's constructed from type defintions
+        public IntPtr typeDefinition; // const; non-NULL for Il2CppClass's constructed from type defintions
 
-        public /*Il2CppInteropData**/ IntPtr interopData; // const
+        public IntPtr interopData; // const
 
         public Il2CppClass* klass; // not const; hack to pretend we are a MonoVTable. Points to ourself
                                    // End always valid fields
 
         // The following fields need initialized before access. This can be done per field or as an aggregate via a call to Class::Init
         public MyIl2CppFieldInfo* fields; // Initialized in SetupFields
+
         public Il2CppEventInfo* events; // const; Initialized in SetupEvents
         public Il2CppPropertyInfo* properties; // const; Initialized in SetupProperties
         public Il2CppMethodInfo** methods; // const; Initialized in SetupMethods
@@ -52,11 +49,12 @@ namespace FieldInjector
         public Il2CppRuntimeInterfaceOffsetPair* interfaceOffsets; // not const; Initialized in Init
         public IntPtr static_fields; // not const; Initialized in Init
 
-        public /*Il2CppRGCTXData**/ IntPtr rgctx_data; // const; Initialized in Init
+        public IntPtr rgctx_data; // const; Initialized in Init
 
         // used for fast parent checks
         public Il2CppClass** typeHierarchy; // not const; Initialized in SetupTypeHierachy
-                                            // End initialization required fields
+
+        // End initialization required fields
 
         public IntPtr unity_user_data;
 
@@ -70,7 +68,8 @@ namespace FieldInjector
         private ulong cctor_thread;
 
         // Remaining fields are always valid except where noted
-        public /*GenericContainerIndex*/ IntPtr genericContainerIndex;
+        public IntPtr genericContainerIndex;
+
         public uint instance_size;
         public uint actualSize;
         public uint element_size;
@@ -100,6 +99,7 @@ namespace FieldInjector
         // this is critical for performance of Class::InitFromCodegen. Equals to initialized && !has_initialization_error at all times.
         // Use Class::UpdateInitializedAndNoError to update
         public byte bitfield_1;
+
         /*uint8_t initialized_and_no_error : 1;
 
         uint8_t valuetype : 1;

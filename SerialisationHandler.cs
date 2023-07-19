@@ -1,25 +1,26 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using UnhollowerBaseLib;
-using static MelonLoader.MelonLogger;
-using static UnhollowerBaseLib.Runtime.UnityVersionHandler;
 using UnhollowerBaseLib.Runtime;
-using UnhollowerRuntimeLib;
-using UnityEngine;
-using System.Linq;
 using UnhollowerBaseLib.Runtime.VersionSpecific.Class;
 using UnhollowerBaseLib.Runtime.VersionSpecific.MethodInfo;
-using System.Diagnostics;
+using UnhollowerRuntimeLib;
+using UnityEngine;
 using static FieldInjector.Util;
+using static MelonLoader.MelonLogger;
+using static UnhollowerBaseLib.Runtime.UnityVersionHandler;
 
 namespace FieldInjector
 {
     public static unsafe class SerialisationHandler
     {
         #region Simple Action<IntPtr> Invoker
+
         private static readonly IntPtr invokerPtr;
 
         static SerialisationHandler()
@@ -39,7 +40,8 @@ namespace FieldInjector
             Marshal.GetDelegateForFunctionPointer<StaticVoidIntPtrDelegate>(methodPointer)(obj);
             return IntPtr.Zero;
         }
-        #endregion
+
+        #endregion Simple Action<IntPtr> Invoker
 
         #region Injection Entrypoint and Dependency processing
 
@@ -348,7 +350,7 @@ namespace FieldInjector
             }
         }
 
-        #endregion
+        #endregion Injection Entrypoint and Dependency processing
 
         #region Main Serialiser
 
@@ -415,7 +417,6 @@ namespace FieldInjector
                 Log($"Created field of type {res.GetType().Name} for field {field.FieldType.Name} {field.Name}", 5);
 
                 return res;
-
             }
             catch (Exception ex)
             {
@@ -425,7 +426,7 @@ namespace FieldInjector
             return null;
         }
 
-        #endregion
+        #endregion Main Serialiser
 
         #region Finalize patch
 
@@ -438,6 +439,6 @@ namespace FieldInjector
             GCHandle.FromIntPtr(gcHandle).Free();
         }
 
-        #endregion
+        #endregion Finalize patch
     }
 }

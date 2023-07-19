@@ -41,8 +41,8 @@ namespace FieldInjector
             UnityEngine.Object.Instantiate(c);
         }
     }
-
 }
+
 /*
 
 [Serializable]
@@ -53,7 +53,6 @@ internal struct TestStruct
     public string str;
     public GameObject objRef;
 }
-
 
 internal class TestMBSt : MonoBehaviour
 {
@@ -76,12 +75,16 @@ internal class TestMBSt : MonoBehaviour
 }
 */
 
-
 public class TestMB8 : MonoBehaviour
 {
 #if !UNITY_EDITOR
-    public TestMB8(IntPtr ptr) : base(ptr) { }
-    static void Log(string s) => MelonLogger.Msg(s);
+
+    public TestMB8(IntPtr ptr) : base(ptr)
+    {
+    }
+
+    private static void Log(string s) => MelonLogger.Msg(s);
+
 #else
     static void Log(string s) => Debug.Log(s);
 #endif
@@ -132,6 +135,9 @@ public class TestMB8 : MonoBehaviour
 
     public void Start()
     {
+        Log("===============");
+        Log("TestMB8.Start()");
+        Log("===============");
         Log($"flag is: {this.flagValue}");
         Log($"tr is: {this.tr.gameObject.name}");
         Log($"space is: {this.space}");
