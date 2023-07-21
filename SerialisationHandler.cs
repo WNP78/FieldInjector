@@ -50,12 +50,17 @@ namespace FieldInjector
             return GetClassPointerForType(t) != IntPtr.Zero;
         }
 
-        public static void Inject<T>(int debugLevel = 5)
+        public static void Inject<T>(int debugLevel = 0)
         {
             Inject(debugLevel, typeof(T));
         }
 
-        public static void Inject(int debugLevel = 5, params Type[] t)
+        public static void Inject(Type type, int debugLevel = 0)
+        {
+            Inject(debugLevel, type);
+        }
+
+        public static void Inject(int debugLevel = 0, params Type[] t)
         {
             LogLevel = debugLevel;
 
