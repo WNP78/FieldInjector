@@ -9,11 +9,6 @@ namespace FieldInjector
 {
     internal class Mod : MelonMod
     {
-        public override void OnInitializeMelon()
-        {
-            SerialisationHandler.Inject<TestMB8>(debugLevel: 5);
-        }
-
         public override void OnSceneWasInitialized(int buildIndex, string sceneName)
         {
             Test();
@@ -21,6 +16,19 @@ namespace FieldInjector
 
         public static void Test()
         {
+            Logging.Msg("===========");
+            Logging.Msg("Mod.Test");
+
+            /*unsafe
+            {
+                var type = (MyIl2CppClass*)Util.GetClassPointerForType<Vector3>();
+                Logging.Msg(type->Debug());
+                return;
+            }*/
+
+            Logging.Msg("Injecting test class");
+            SerialisationHandler.Inject<TestMB8>(debugLevel: 5);
+
             Logging.Msg("Creating test object");
             var g1 = new GameObject("Test Source");
             var c = g1.AddComponent<TestMB8>();
@@ -39,6 +47,8 @@ namespace FieldInjector
 
             Logging.Msg("Duplicating test object\n\n\n");
             UnityEngine.Object.Instantiate(c);
+
+            Logging.Msg("===========");
         }
     }
 }
@@ -139,17 +149,17 @@ public class TestMB8 : MonoBehaviour
         Log("TestMB8.Start()");
         Log("===============");
         Log($"flag is: {this.flagValue}");
-        Log($"tr is: {this.tr.gameObject.name}");
+        Log($"tr is: {this.tr.gameObject?.name}");
         Log($"space is: {this.space}");
         Log($"testB is: {this.testB}");
         Log($"testEnum is: {this.testEnum}");
         Log($"testString is: {this.testString}");
         Log($"array1 = {PrintArray(this.array1)}");
-        Log($"spaces = {PrintArray(this.spaces.ToArray())}");
+        Log($"spaces = {PrintArray(this.spaces?.ToArray())}");
         Log($"stringArray = {PrintArray(this.stringArray)}");
-        Log($"stringList = {PrintArray(this.stringList.ToArray())}");
+        Log($"stringList = {PrintArray(this.stringList?.ToArray())}");
         Log($"transformArray = {PrintObjArray(this.transformArray)}");
-        Log($"objectList = {PrintObjArray(this.objectList.ToArray())}");
+        Log($"objectList = {PrintObjArray(this.objectList?.ToArray())}");
         Log("");
     }
 }
