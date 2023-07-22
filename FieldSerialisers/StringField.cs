@@ -8,7 +8,7 @@ namespace FieldInjector.FieldSerialisers
 {
     internal unsafe class StringField : SerialisedField
     {
-        protected override IntPtr FieldType => il2cpp_class_get_type(Il2CppClassPointerStore<string>.NativeClassPtr);
+        public override IntPtr FieldType => il2cpp_class_get_type(Il2CppClassPointerStore<string>.NativeClassPtr);
 
         public StringField(FieldInfo field) : base(field)
         {
@@ -20,13 +20,13 @@ namespace FieldInjector.FieldSerialisers
             return sizeof(IntPtr);
         }
 
-        protected override Expression GetNativeToManagedExpression(Expression nativePtr)
+        public override Expression GetNativeToManagedExpression(Expression nativePtr)
         {
             var method = ((Func<IntPtr, string>)Il2CppStringToManaged).Method;
             return Expression.Call(method, nativePtr);
         }
 
-        protected override Expression GetManagedToNativeExpression(Expression monoObj)
+        public override Expression GetManagedToNativeExpression(Expression monoObj)
         {
             var method = ((Func<string, IntPtr>)ManagedStringToIl2Cpp).Method;
             return Expression.Call(method, monoObj);

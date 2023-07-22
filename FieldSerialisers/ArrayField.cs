@@ -70,9 +70,9 @@ namespace FieldInjector.FieldSerialisers
         {
         }
 
-        protected override IntPtr FieldType => this._fieldType;
+        public override IntPtr FieldType => this._fieldType;
 
-        protected override Expression GetManagedToNativeExpression(Expression managedObj)
+        public override Expression GetManagedToNativeExpression(Expression managedObj)
         {
             Expression cppArray;
             var managedElementType = this._elementType;
@@ -96,7 +96,7 @@ namespace FieldInjector.FieldSerialisers
             return Expression.Property(cppArray, "Pointer");
         }
 
-        protected override Expression GetNativeToManagedExpression(Expression nativePtr)
+        public override Expression GetNativeToManagedExpression(Expression nativePtr)
         {
             var ctor = this._proxyType.GetConstructor(new Type[] { typeof(IntPtr) });
             Expression cppList = Expression.New(ctor, nativePtr);

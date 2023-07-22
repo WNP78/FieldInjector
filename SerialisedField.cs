@@ -15,7 +15,7 @@ namespace FieldInjector
     {
         protected FieldInfo field;
 
-        protected abstract IntPtr FieldType { get; }
+        public abstract IntPtr FieldType { get; }
 
         public IntPtr NativeField { get; set; }
 
@@ -28,9 +28,9 @@ namespace FieldInjector
             this.field = field;
         }
 
-        protected abstract Expression GetNativeToManagedExpression(Expression nativePtr);
+        public abstract Expression GetNativeToManagedExpression(Expression nativePtr);
 
-        protected abstract Expression GetManagedToNativeExpression(Expression monoObj);
+        public abstract Expression GetManagedToNativeExpression(Expression monoObj);
 
         public virtual IEnumerable<Expression> GetDeserialiseExpression(Expression monoObj, Expression nativePtr, Expression fieldPtr)
         {

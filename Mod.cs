@@ -19,50 +19,127 @@ namespace FieldInjector
             Logging.Msg("===========");
             Logging.Msg("Mod.Test");
 
-            /*unsafe
+            /*
+            unsafe
             {
                 var type = (MyIl2CppClass*)Util.GetClassPointerForType<Vector3>();
                 Logging.Msg(type->Debug());
+                Logging.Msg("\n\n\n");
+
+                SerialisationHandler.Inject<TestStruct>(debugLevel: 5);
+                type = (MyIl2CppClass*)Util.GetClassPointerForType<TestStruct>();
+                Logging.Msg(type->Debug());
+
+                type = (MyIl2CppClass*)Util.GetClassPointerForType<Il2CppSystem.ValueType>();
+                Logging.Msg(type->Debug());
+
                 return;
             }*/
 
             Logging.Msg("Injecting test class");
-            SerialisationHandler.Inject<TestMB8>(debugLevel: 5);
+            SerialisationHandler.Inject<TestMBSt>(debugLevel: 5);
 
+            /*
             Logging.Msg("Creating test object");
             var g1 = new GameObject("Test Source");
             var c = g1.AddComponent<TestMB8>();
-            c.space = Space.Self;
-            c.testB = AnisotropicFiltering.ForceEnable;
-            c.testEnum = TestMB8.TestEnum.B;
-            c.flagValue = 92;
-            c.tr = g1.transform;
-            c.array1 = new TestMB8.TestEnum[] { TestMB8.TestEnum.C, TestMB8.TestEnum.A, TestMB8.TestEnum.B };
-            c.spaces = new List<Space>(new Space[] { Space.World, Space.Self, Space.World });
-            c.stringArray = new string[] { "one", "two", "three" };
-            c.stringList = new List<string>(new string[] { "alpha", "bravo", "charlie" });
-            c.transformArray = new Transform[] { g1.transform, g1.transform };
-            c.objectList = new List<GameObject>(new GameObject[] { g1 });
-            c.testString = "tabloid's real name";
+             */
+
+            Logging.Msg("Creating test object");
+            var g1 = new GameObject("Test Source");
+            var script = g1.AddComponent<TestMBSt>();
+            var c = new TestStruct
+            {
+                space = Space.Self,
+                testB = AnisotropicFiltering.ForceEnable,
+                testEnum = TestEnum.B,
+                flagValue = 92,
+                tr = g1.transform,
+                array1 = new TestEnum[] { TestEnum.C, TestEnum.A, TestEnum.B },
+                spaces = new List<Space>(new Space[] { Space.World, Space.Self, Space.World }),
+                stringArray = new string[] { "one", "two", "three" },
+                stringList = new List<string>(new string[] { "alpha", "bravo", "charlie" }),
+                transformArray = new Transform[] { g1.transform, g1.transform },
+                objectList = new List<GameObject>(new GameObject[] { g1 }),
+                testString = "tabloid's real name"
+            };
 
             Logging.Msg("Duplicating test object\n\n\n");
-            UnityEngine.Object.Instantiate(c);
+            UnityEngine.Object.Instantiate(g1);
 
             Logging.Msg("===========");
         }
     }
 }
 
-/*
+public enum TestEnum : int
+{
+    A,
+    B,
+    C,
+};
 
 [Serializable]
 internal struct TestStruct
 {
-    public float x;
-    public Vector3 vector;
-    public string str;
-    public GameObject objRef;
+    public Space space;
+    public AnisotropicFiltering testB;
+    public TestEnum testEnum;
+    public int flagValue;
+    public Transform tr;
+    public TestEnum[] array1;
+    public List<Space> spaces;
+    public string[] stringArray;
+    public List<string> stringList;
+    public Transform[] transformArray;
+    public List<GameObject> objectList;
+    public string testString;
+
+    private static string PrintArray<T>(T[] arr)
+    {
+        if (arr == null)
+        {
+            return "null";
+        }
+        else
+        {
+            return $"[{arr.Length}]: {string.Join(",", arr)}";
+        }
+    }
+
+    private static string PrintObjArray(IEnumerable<UnityEngine.Object> arr)
+    {
+        if (arr == null)
+        {
+            return "null";
+        }
+        else
+        {
+            return $"[{arr.Count()}]: {string.Join(",", arr.Select((a) => a.name))}";
+        }
+    }
+
+    public void Debug()
+    {
+        Logging.Msg("===============");
+        Logging.Msg("TestStruct.Debug()");
+        Logging.Msg("===============");
+        Logging.Msg($"flag is: {this.flagValue}");
+        Logging.Msg($"tr is: {this.tr.gameObject?.name}");
+        Logging.Msg($"space is: {this.space}");
+        Logging.Msg($"testB is: {this.testB}");
+        Logging.Msg($"testEnum is: {this.testEnum}");
+        Logging.Msg($"testString is: {this.testString}");
+        Logging.Msg($"array1 = {PrintArray(this.array1)}");
+        Logging.Msg($"spaces = {PrintArray(this.spaces?.ToArray())}");
+        Logging.Msg($"stringArray = {PrintArray(this.stringArray)}");
+        Logging.Msg($"stringList = {PrintArray(this.stringList?.ToArray())}");
+        Logging.Msg($"transformArray = {PrintObjArray(this.transformArray)}");
+        Logging.Msg($"objectList = {PrintObjArray(this.objectList?.ToArray())}");
+        Logging.Msg("");
+    }
 }
+
 
 internal class TestMBSt : MonoBehaviour
 {
@@ -77,14 +154,11 @@ internal class TestMBSt : MonoBehaviour
 
     void Awake()
     {
-        Log($"myStruct.x = {this.myStruct.x}");
-        Log($"myStruct.vector = {this.myStruct.vector.ToString()}");
-        Log($"myStruct.str = {this.myStruct.str}");
-        Log($"myStruct.objRef = {(this.myStruct.objRef == null ? "null" : this.myStruct.objRef.name)}");
+        this.myStruct.Debug();
     }
 }
-*/
 
+/*
 public class TestMB8 : MonoBehaviour
 {
 #if !UNITY_EDITOR
@@ -163,3 +237,4 @@ public class TestMB8 : MonoBehaviour
         Log("");
     }
 }
+*/

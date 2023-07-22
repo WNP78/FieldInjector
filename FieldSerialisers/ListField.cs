@@ -12,14 +12,14 @@ namespace FieldInjector.FieldSerialisers
         {
         }
 
-        protected override Expression GetManagedToNativeExpression(Expression monoObj)
+        public override Expression GetManagedToNativeExpression(Expression monoObj)
         {
             MethodInfo toArray = monoObj.Type.GetMethod("ToArray", BindingFlags.Public | BindingFlags.Instance);
 
             return base.GetManagedToNativeExpression(Expression.Call(monoObj, toArray));
         }
 
-        protected override Expression GetNativeToManagedExpression(Expression nativePtr)
+        public override Expression GetNativeToManagedExpression(Expression nativePtr)
         {
             var res = base.GetNativeToManagedExpression(nativePtr);
             var ctor = this.field.FieldType.GetConstructor(new Type[] { typeof(IEnumerable<>).MakeGenericType(this._elementType) });

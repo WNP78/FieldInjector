@@ -1,10 +1,14 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using UnhollowerBaseLib;
 using UnhollowerBaseLib.Runtime;
 using UnhollowerBaseLib.Runtime.VersionSpecific.Class;
@@ -106,7 +110,23 @@ namespace FieldInjector
 
             foreach (var type in t) CollectDependencies(type);
 
-            InjectBatch(typesToInject.ToArray());
+            int numClasses = 0, numStructs = 0;
+            foreach (var tti in typesToInject)
+            {
+                if (tti.IsValueType) { numStructs++; }
+                else {  numClasses++; }
+            }
+
+            Type[] classes = new Type[numClasses];
+            Type[] structs = new Type[numStructs];
+            int icl = 0, ist = 0;
+            foreach (var type in typesToInject)
+            {
+                if (!type.IsValueType) { classes[icl++] = type; }
+                else { structs[ist++] = type; }
+            }
+
+            InjectBatch(classes, structs);
         }
 
         private struct InjectionProgress
@@ -118,37 +138,299 @@ namespace FieldInjector
 
         private static readonly Dictionary<Type, InjectionProgress> injection = new Dictionary<Type, InjectionProgress>();
 
-        private static void InjectBatch(Type[] typesToInject)
+        #endregion Injection Entrypoint and Dependency processing
+
+        // unhollower assigns fake tokens descending by starting at -2 (il2cpp only uses positive tokens, so the all the negative numbers can be used by us safely
+        // we used to use a publiciser to allocate them with unhollower's ones, so we decremented their counter
+        // however to avoid hooking into unhollower's gubbins too much we can just start at the other end of the negative numbers
+        // and if someone injects enough types for them to meet then the universe has literally exploded
+        private static long myTokenOverride = long.MinValue + 1;
+
+        private static ConcurrentDictionary<long, IntPtr> _fakeTokenClasses;
+
+        private static IntPtr _fakeImage;
+        private static IntPtr _fakeAssembly;
+        private static bool _initImage;
+        internal static Dictionary<Type, IntPtr> _injectedStructs = new Dictionary<Type, IntPtr>();
+
+        private static Action<Type, IntPtr> AddToClassFromNameDictionary = (Action<Type, IntPtr>)Delegate.CreateDelegate(typeof(Action<Type, IntPtr>), typeof(ClassInjector).GetMethod("AddToClassFromNameDictionary", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static));
+
+        private static void InitImage()
+        {
+            if (_initImage) return; 
+
+            // largely does a similar thing to unhollower
+            var img = NewImage();
+            var asm = NewAssembly();
+            var name = Marshal.StringToHGlobalAnsi("InjectedStructs");
+
+            asm.Name = name;
+            img.Assembly = asm.AssemblyPointer;
+            img.Dynamic = 1;
+            img.Name = name;
+
+            if (img.HasNameNoExt)
+            {
+                img.NameNoExt = img.Name;
+            }
+
+            _fakeImage = img.Pointer;
+            _fakeAssembly = asm.Pointer;
+            _initImage = true;
+        }
+
+        private static IntPtr FakeImage
+        {
+            get
+            {
+                if (!_initImage) InitImage();
+                return _fakeImage;
+            }
+        }
+
+        private static IntPtr FakeAssembly
+        {
+            get
+            {
+                if (! _initImage) InitImage();
+                return _fakeAssembly;
+            }
+        }
+
+        private static ConcurrentDictionary<long, IntPtr> FakeTokenClasses
+        {
+            get
+            {
+                if (_fakeTokenClasses == null)
+                {
+                    _fakeTokenClasses = typeof(ClassInjector).GetField("FakeTokenClasses")?.GetValue(null) as ConcurrentDictionary<long, IntPtr>;
+                }
+
+                if (_fakeTokenClasses == null)
+                {
+                    throw new Exception("Can't find fake token classes dictionary");
+                }
+
+                return _fakeTokenClasses;
+            }
+        }
+
+        private static IntPtr InjectStruct(Type type)
+        {
+            IntPtr result = GetClassPointerForType(type);
+            if (result != IntPtr.Zero) { return result; }
+            if (type.IsGenericType || type.IsEnum || !type.IsValueType)
+            {
+                throw new InvalidOperationException($"Type {type} is not valid for struct injection");
+            }
+
+            var basePtr = GetClassPointerForType<Il2CppSystem.ValueType>();
+            var baseKlass = (MyIl2CppClass*)basePtr;
+
+            // allocate class pointer
+            var p = (MyIl2CppClass*)NewClass(baseKlass->vtable_count).Pointer;
+
+            // assign token, set it to lead to our class
+            long token = Interlocked.Increment(ref myTokenOverride);
+            FakeTokenClasses[token] = (IntPtr)p;
+
+            // start setting up our class properties, mostly referenced from dumped il2cpp structs or unhollower classinjector
+            p->image = (Il2CppImage*)FakeImage;
+            p->gc_desc = IntPtr.Zero;
+            p->name = Marshal.StringToHGlobalAnsi(type.Name);
+            p->namespaze = Marshal.StringToHGlobalAnsi(type.Namespace ?? string.Empty);
+
+            p->byval_arg = new MyIl2CppType()
+            {
+                data = (IntPtr)token,
+                attrs = 0,
+                type = Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE,
+                num_mods = 0,
+                byref = false,
+                pinned = false,
+                valuetype = true,
+            };
+
+            p->this_arg = new MyIl2CppType()
+            {
+                data = (IntPtr)token,
+                attrs = 0,
+                type = Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE,
+                num_mods = 0,
+                byref = true,
+                pinned = false,
+                valuetype = false,
+            };
+
+            p->element_class = (Il2CppClass*)p;
+            p->castClass = (Il2CppClass*)p;
+            p->declaringType = (Il2CppClass*)IntPtr.Zero;
+            p->parent = (Il2CppClass*)basePtr;
+            p->generic_class = IntPtr.Zero;
+            p->typeDefinition = (IntPtr)token;
+            p->interopData = IntPtr.Zero;
+            p->klass = (Il2CppClass*)p;
+
+            p->events = (Il2CppEventInfo*)IntPtr.Zero;
+            p->event_count = 0;
+
+            p->properties = (Il2CppPropertyInfo*)IntPtr.Zero;
+            p->property_count = 0;
+
+            // todo-ish : field methods not injected
+            p->methods = baseKlass->methods;
+            p->method_count = baseKlass->method_count;
+
+            p->nestedTypes = (Il2CppClass**)IntPtr.Zero;
+            p->nested_type_count = 0;
+
+            // no interfaces, fine for now I guess, can rework if needed
+            p->implementedInterfaces = (Il2CppClass**)IntPtr.Zero;
+            p->interfaces_count = 0;
+            p->interfaceOffsets = (Il2CppRuntimeInterfaceOffsetPair*)IntPtr.Zero;
+            p->interface_offsets_count = 0;
+
+            // nope lol
+            p->static_fields = IntPtr.Zero;
+            p->static_fields_size = 0;
+            p->thread_static_fields_size = 0;
+            p->thread_static_fields_offset = 0;
+
+            p->rgctx_data = IntPtr.Zero;
+
+            // build type heirachy
+            var typeDepth = baseKlass->typeHierarchyDepth + 1;
+            p->typeHierarchyDepth = (byte)typeDepth;
+            p->typeHierarchy = (Il2CppClass**)Marshal.AllocHGlobal(typeDepth * IntPtr.Size);
+            p->typeHierarchy[typeDepth - 1] = (Il2CppClass*)basePtr;
+            for (int i = 0; i < typeDepth; i++)
+            {
+                p->typeHierarchy[i] = baseKlass->typeHierarchy[i];
+            }
+
+            p->unity_user_data = IntPtr.Zero;
+            p->initializationExceptionGCHandle = 0;
+
+            // setting these to 1 so it doesn't try any funny business I guess? won't hurt, probably won't do anything
+            p->cctor_started = 1;
+            p->cctor_finished = 1;
+
+            p->native_size = 0;
+            p->instance_size = (uint)sizeof(Il2CppObject);
+            p->actualSize = (uint)sizeof(Il2CppObject);
+
+            p->genericContainerIndex = IntPtr.Zero;
+            p->element_size = 0;
+            p->token = 0; // il2cpp doesn't seem to care about this
+
+            p->vtable_count = baseKlass->vtable_count; //  todo copy vtable
+            p->genericRecursionDepth = 1;
+            p->rank = 0;
+            p->flags = Il2CppClassAttributes.TYPE_ATTRIBUTE_PUBLIC | Il2CppClassAttributes.TYPE_ATTRIBUTE_EXPLICIT_LAYOUT | Il2CppClassAttributes.TYPE_ATTRIBUTE_SEALED;
+
+            p->minimumAlignment = 8;
+            p->naturalAligment = 8;
+            p->packingSize = 0;
+
+            p->bitfield =
+                MyIl2CppClass.ClassFlags.initialized_and_no_error |
+                MyIl2CppClass.ClassFlags.valuetype;
+
+            AddToClassFromNameDictionary(type, (IntPtr)p);
+            _injectedStructs[type] = (IntPtr)p;
+
+            return (IntPtr)p;
+        }
+
+        private static void InjectStructFields(Type type, MyIl2CppClass* klass)
+        {
+            var serialiser = StructSerialiser<float>.GetSerialiser(type);
+            if (serialiser.IsBlittable)
+            {
+                klass->bitfield |= MyIl2CppClass.ClassFlags.is_blittable;
+            }
+
+            serialiser.WriteFields(klass);
+        }
+
+        private static void InjectBatch(Type[] classes, Type[] structs)
         {
             injection.Clear();
-            int n = typesToInject.Length;
+            int n = classes.Length;
+            int m = structs.Length;
 
-            Log($"Serialising a batch of {n} types:", 1);
+            // build a mapping of the structs and their dependencies
+            Dictionary<Type, List<Type>> structDependencyMappings = new Dictionary<Type, List<Type>>();
+            foreach (var type in structs)
+            {
+                List<Type> list = null;
+                foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    if (structs.Contains(field.FieldType))
+                    {
+                        if (list == null) { list = new List<Type>(); }
+                        list.Add(field.FieldType);
+                    }
+                }
 
-            //while (!Debugger.IsAttached) { Thread.Sleep(10); }
-            Debugger.Break();
+                if (list != null) { structDependencyMappings.Add(type, list); }
+            }
+
+            // reorder the list to ensure that structs that are inside other structs are injected before those structs
+            for (int i = 0; i < m; i++)
+            {
+                if (structDependencyMappings.TryGetValue(structs[i], out var dependencies))
+                {
+                    foreach (var dep in dependencies)
+                    {
+                        int j = Array.IndexOf(structs, dep);
+                        if (j > i) // the dependency needs to be before the dependent, so swap
+                        {
+                            (structs[i], structs[j]) = (structs[j], structs[i]);
+                            i--; // this will set us back so we now check the dependency we just swapped into this slot on the next iteration
+                            break;
+                        }
+                    }
+                }
+            }
 
             // reorder the list to ensure that base types are processed first
             for (int i = 0; i < n; i++)
             {
-                int index = Array.IndexOf(typesToInject, typesToInject[i].BaseType);
+                int index = Array.IndexOf(classes, classes[i].BaseType);
                 if (index != -1 && index < i)
                 {
                     // swap
-                    (typesToInject[i], typesToInject[index]) = (typesToInject[index], typesToInject[i]);
+                    (classes[i], classes[index]) = (classes[index], classes[i]);
                 }
             }
 
-            if (LogLevel >= 2)
+            Log($"Serialising a batch of {n} classes and {m} structs:", 1);
+            if (LogLevel >= 1)
             {
-                foreach (var tti in typesToInject)
+                foreach (var tti in classes)
                 {
                     Msg($"  {tti.FullName}");
                 }
             }
 
+            // Initial struct injection
+            IntPtr[] structPtrs = new IntPtr[m];
+            foreach (var t in structs)
+            {
+                try
+                {
+                    Log($"Initial injection for struct {t.Name}", 2);
+                    InjectStruct(t);
+                }
+                catch (Exception ex)
+                {
+                    Error($"Struct initial injection failed for {t}:", ex);
+                }
+            }
+
             // Inject class and get a reference to it.
-            foreach (var t in typesToInject)
+            foreach (var t in classes)
             {
                 try
                 {
@@ -184,8 +466,25 @@ namespace FieldInjector
                 }
             }
 
-            // Do field injection.
-            foreach (var t in typesToInject)
+            // Inject struct fields
+            for (int i = 0; i < m; i++)
+            {
+                var t = structs[i];
+                try
+                {
+                    Log($"Writing struct fields for {t.FullName}", 2);
+                    var p = structPtrs[i];
+                    var ser = StructSerialiser<int>.GetSerialiser(t);
+                    ser.WriteFields((MyIl2CppClass*)p);
+                }
+                catch (Exception ex)
+                {
+                    Error($"Struct field injection failed for {t}:", ex);
+                }
+            }
+
+            // Inject class fields
+            foreach (var t in classes)
             {
                 var inj = injection[t];
 
@@ -354,8 +653,6 @@ namespace FieldInjector
                 injection[t] = inj;
             }
         }
-
-        #endregion Injection Entrypoint and Dependency processing
 
         #region Main Serialiser
 

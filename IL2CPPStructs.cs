@@ -145,8 +145,8 @@ namespace FieldInjector
             s.Append($"gc_desc = {this.gc_desc}\n");
             s.Append($"name = {str(this.name)}\n");
             s.Append($"namespaze = {str(this.namespaze)}\n");
-            s.Append($"byval_arg = {this.byval_arg}\n");
-            s.Append($"this_arg = {this.this_arg}\n");
+            s.Append($"byval_arg = {this.byval_arg.ToString()}\n");
+            s.Append($"this_arg = {this.this_arg.ToString()}\n");
             s.Append($"element_class = {ToStringClass((IntPtr)this.element_class)})\n");
             s.Append($"castClass = {ToStringClass((IntPtr)this.castClass)}\n");
             s.Append($"declaringType = {ToStringClass((IntPtr)this.declaringType)}\n");
@@ -195,6 +195,13 @@ namespace FieldInjector
             s.Append($"naturalAligment = {this.naturalAligment}\n");
             s.Append($"packingSize = {this.packingSize}\n");
             s.Append($"bitfield = {this.bitfield}\n");
+
+            s.Append($"implementedInterfaces[{this.interfaces_count}]:\n");
+            for (int i = 0; i < this.interfaces_count; i++)
+            {
+                var iface = (MyIl2CppClass*)this.implementedInterfaces[i];
+                s.Append($"  {Marshal.PtrToStringAnsi(iface->namespaze)}::{Marshal.PtrToStringAnsi(iface->name)}\n");
+            }
 
             return s.ToString();
         }
