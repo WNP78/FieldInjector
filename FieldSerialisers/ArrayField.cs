@@ -29,14 +29,10 @@ namespace FieldInjector.FieldSerialisers
         {
             this._elementType = elementType;
 
-            Log($"Creating array field for {field.FieldType.Name} {field.Name}", 5);
-
             if (elementType.IsEnum)
             {
                 elementType = elementType.GetEnumUnderlyingType();
             }
-
-            Log($"elementType = {elementType}", 5);
 
             if (elementType.IsValueType)
             {
@@ -51,19 +47,11 @@ namespace FieldInjector.FieldSerialisers
                 this._proxyType = typeof(Il2CppReferenceArray<>).MakeGenericType(elementType);
             }
 
-            Log($"ProxyType = {this._proxyType}", 5);
-
             var classPtr = GetClassPointerForType(elementType);
-
-            Log($"classPtr = {classPtr}", 5);
 
             var arrayClassPtr = il2cpp_array_class_get(classPtr, 1);
 
-            Log($"arrayClassPtr = {arrayClassPtr}", 5);
-
             this._fieldType = il2cpp_class_get_type(arrayClassPtr);
-            
-            Log($"fieldType = {this._fieldType}", 5);
         }
 
         public ArrayField(FieldInfo field) : this(field.FieldType.GetElementType(), field)

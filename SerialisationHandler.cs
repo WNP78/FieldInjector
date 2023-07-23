@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MelonLoader;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -68,20 +69,22 @@ namespace FieldInjector
         {
             LogLevel = debugLevel;
 
-            var typesToInject = new HashSet<Type>(t);
+            var typesToInject = new HashSet<Type>();
 
-            Type ProcessFieldType(Type ft)
+            Type ProcessType(Type ft)
             {
+                if (ft.IsEnum) ft = ft.GetEnumUnderlyingType();
+
                 if (ft.IsPrimitive) return null;
 
                 if (typesToInject.Contains(ft)) return null;
 
-                if (ft.IsArray) return ProcessFieldType(ft.GetElementType());
+                if (ft.IsArray) return ProcessType(ft.GetElementType());
 
                 if (ft.IsGenericType)
                 {
                     var td = ft.GetGenericTypeDefinition();
-                    if (td == typeof(List<>) || td == typeof(Nullable)) return ProcessFieldType(td.GetGenericArguments()[0]);
+                    if (td == typeof(List<>) || td == typeof(Nullable)) return ProcessType(ft.GetGenericArguments()[0]);
                 }
 
                 if (IsTypeInjected(ft)) return null;
@@ -91,24 +94,24 @@ namespace FieldInjector
 
             void CollectDependencies(Type ct)
             {
+                if (ct == null) return;
                 if (serialisationCache.ContainsKey(ct)) { return; }
                 if (typesToInject.Contains(ct)) { return; }
                 typesToInject.Add(ct);
 
-                if (ct.BaseType != null) CollectDependencies(ct.BaseType);
+                if (!ct.IsValueType && ct.BaseType != null) CollectDependencies(ProcessType(ct.BaseType));
 
                 foreach (var type in ct
                     .GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                     .Where(field => !field.IsNotSerialized)
-                    .Select((field) => ProcessFieldType(field.FieldType))
+                    .Select((field) => ProcessType(field.FieldType))
                     .Where(r => r != null))
                 {
-                    typesToInject.Add(type);
                     CollectDependencies(type);
                 }
             }
 
-            foreach (var type in t) CollectDependencies(type);
+            foreach (var type in t) CollectDependencies(ProcessType(type));
 
             int numClasses = 0, numStructs = 0;
             foreach (var tti in typesToInject)
@@ -140,6 +143,8 @@ namespace FieldInjector
 
         #endregion Injection Entrypoint and Dependency processing
 
+        #region Main Serialiser
+
         // unhollower assigns fake tokens descending by starting at -2 (il2cpp only uses positive tokens, so the all the negative numbers can be used by us safely
         // we used to use a publiciser to allocate them with unhollower's ones, so we decremented their counter
         // however to avoid hooking into unhollower's gubbins too much we can just start at the other end of the negative numbers
@@ -153,7 +158,11 @@ namespace FieldInjector
         private static bool _initImage;
         internal static Dictionary<Type, IntPtr> _injectedStructs = new Dictionary<Type, IntPtr>();
 
-        private static Action<Type, IntPtr> AddToClassFromNameDictionary = (Action<Type, IntPtr>)Delegate.CreateDelegate(typeof(Action<Type, IntPtr>), typeof(ClassInjector).GetMethod("AddToClassFromNameDictionary", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static));
+        private static Action<Type, IntPtr> AddToClassFromNameDictionary = 
+            (Action<Type, IntPtr>)Delegate.CreateDelegate(typeof(Action<Type, IntPtr>), typeof(ClassInjector).GetMethod(
+                "AddToClassFromNameDictionary", 
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static, Type.DefaultBinder,
+                new Type[] { typeof(Type), typeof(IntPtr) }, null));
 
         private static void InitImage()
         {
@@ -203,7 +212,7 @@ namespace FieldInjector
             {
                 if (_fakeTokenClasses == null)
                 {
-                    _fakeTokenClasses = typeof(ClassInjector).GetField("FakeTokenClasses")?.GetValue(null) as ConcurrentDictionary<long, IntPtr>;
+                    _fakeTokenClasses = typeof(ClassInjector).GetField("FakeTokenClasses", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) as ConcurrentDictionary<long, IntPtr>;
                 }
 
                 if (_fakeTokenClasses == null)
@@ -408,20 +417,19 @@ namespace FieldInjector
             Log($"Serialising a batch of {n} classes and {m} structs:", 1);
             if (LogLevel >= 1)
             {
-                foreach (var tti in classes)
-                {
-                    Msg($"  {tti.FullName}");
-                }
+                foreach (var tti in structs) Msg($"  {tti.FullName}");
+                foreach (var tti in classes) Msg($"  {tti.FullName}");
             }
 
             // Initial struct injection
             IntPtr[] structPtrs = new IntPtr[m];
-            foreach (var t in structs)
+            for (int i = 0; i < m; i++)
             {
+                Type t = structs[i];
                 try
                 {
                     Log($"Initial injection for struct {t.Name}", 2);
-                    InjectStruct(t);
+                    structPtrs[i] = InjectStruct(t);
                 }
                 catch (Exception ex)
                 {
@@ -474,8 +482,7 @@ namespace FieldInjector
                 {
                     Log($"Writing struct fields for {t.FullName}", 2);
                     var p = structPtrs[i];
-                    var ser = StructSerialiser<int>.GetSerialiser(t);
-                    ser.WriteFields((MyIl2CppClass*)p);
+                    InjectStructFields(t, (MyIl2CppClass*)p);
                 }
                 catch (Exception ex)
                 {
@@ -653,8 +660,6 @@ namespace FieldInjector
                 injection[t] = inj;
             }
         }
-
-        #region Main Serialiser
 
         private static readonly Dictionary<Type, SerialisedField[]> serialisationCache = new Dictionary<Type, SerialisedField[]>();
 

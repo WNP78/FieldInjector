@@ -63,9 +63,12 @@ namespace FieldInjector
                 objectList = new List<GameObject>(new GameObject[] { g1 }),
                 testString = "tabloid's real name"
             };
+            script.myStruct = c;
+            script.myStruct.Debug();
 
             Logging.Msg("Duplicating test object\n\n\n");
-            UnityEngine.Object.Instantiate(g1);
+            var g2 = UnityEngine.Object.Instantiate(g1);
+            g2.GetComponent<TestMBSt>().myStruct.Debug();
 
             Logging.Msg("===========");
         }
@@ -125,7 +128,7 @@ internal struct TestStruct
         Logging.Msg("TestStruct.Debug()");
         Logging.Msg("===============");
         Logging.Msg($"flag is: {this.flagValue}");
-        Logging.Msg($"tr is: {this.tr.gameObject?.name}");
+        Logging.Msg($"tr is: {this.tr?.gameObject?.name}");
         Logging.Msg($"space is: {this.space}");
         Logging.Msg($"testB is: {this.testB}");
         Logging.Msg($"testEnum is: {this.testEnum}");
@@ -151,11 +154,6 @@ internal class TestMBSt : MonoBehaviour
 #else
     static void Log(string s) => Debug.Log(s);
 #endif
-
-    void Awake()
-    {
-        this.myStruct.Debug();
-    }
 }
 
 /*

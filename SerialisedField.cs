@@ -1,4 +1,5 @@
 ﻿using FieldInjector.FieldSerialisers;
+using MelonLoader;
 using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
@@ -114,7 +115,16 @@ namespace FieldInjector
             }
             else if (fieldType.IsValueType)
             {
-                return new StructField(field);
+                if (SerialisationHandler._injectedStructs.ContainsKey(fieldType))
+                {
+                    return (SerialisedField)Activator.CreateInstance(typeof(CustomStructField<>).MakeGenericType(fieldType), field);
+                }
+                else if (GetClassPointerForType(fieldType) != null)
+                {
+                    return new StructField(field);
+                }
+
+                throw new NotSupportedException();
             }
             else if (fieldType.IsArray && fieldType.GetArrayRank() == 1)
             {

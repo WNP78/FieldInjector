@@ -15,8 +15,8 @@ namespace FieldInjector
         private struct BlitField
         {
             public FieldInfo field;
-            public int offset;
             public int length;
+            public int offset;
         }
 
         private struct PointerMarshalField
@@ -29,9 +29,9 @@ namespace FieldInjector
         private struct SubStructField
         {
             public FieldInfo field;
-            public int offset;
             public int length;
             public IStructSerialiser serialiser;
+            public int offset;
         }
 
         public static StructSerialiser<T> Cache;
@@ -55,6 +55,7 @@ namespace FieldInjector
         private BlitField[] blitFields;
         private PointerMarshalField[] pointerMarshalFields;
         private SubStructField[] subStructFields;
+        private bool offsetsSet = false;
         private DeserialiseDelegate marshalFunction;
 
         public bool IsBlittable { get; private set; }
@@ -73,14 +74,13 @@ namespace FieldInjector
             foreach (var field in fields)
             {
                 var ft = field.FieldType;
-                var offset = (int)Marshal.OffsetOf(ft, field.Name);
 
-                if (ft.IsPrimitive)
+                if (ft.IsPrimitive || ft.IsEnum)
                 {
+                    if (ft.IsEnum) ft = ft.GetEnumUnderlyingType();
                     blitFields.Add(new BlitField()
                     {
                         field = field,
-                        offset = offset,
                         length = Marshal.SizeOf(ft),
                     });
                 }
@@ -92,7 +92,6 @@ namespace FieldInjector
                         blitFields.Add(new BlitField()
                         {
                             field = field,
-                            offset = offset,
                             length = Marshal.SizeOf(ft),
                         });
                     }
@@ -101,7 +100,6 @@ namespace FieldInjector
                         subStructFields.Add(new SubStructField()
                         {
                             field = field,
-                            offset = offset,
                             length = Marshal.SizeOf(ft),
                             serialiser = ser,
                         });
@@ -114,7 +112,6 @@ namespace FieldInjector
                         pointerMarshalFields.Add(new PointerMarshalField()
                         {
                             field = field,
-                            offset = offset,
                             marshaller = SerialisedField.InferFromField(field),
                         });
                     }
@@ -136,6 +133,7 @@ namespace FieldInjector
 
         private DeserialiseDelegate GetMarshalFunction()
         {
+            if (!this.offsetsSet) { throw new NotSupportedException($"fields haven't been written yet for {typeof(T)}"); }
             if (this.marshalFunction != null) return this.marshalFunction;
 
             // generate marshalFunction
@@ -153,12 +151,13 @@ namespace FieldInjector
                 foreach (var bf in this.blitFields)
                 {
                     // tgt.field = Marshal.PtrToStructure<T>(inPtr + offset);
+                    var mm = ((Func<IntPtr, float>)BlitHere<float>).Method.GetGenericMethodDefinition().MakeGenericMethod(bf.field.FieldType);
 
                     expressions.Add(
                         Expression.Assign(
                             Expression.Field(tgt, bf.field),
                             Expression.Call(
-                                ((Func<IntPtr, T>)Marshal.PtrToStructure<T>).Method,
+                                mm,
                                 Expression.Add(inPtr, Expression.Constant(bf.offset)))));
                 }
 
@@ -196,9 +195,10 @@ namespace FieldInjector
             MyIl2CppFieldInfo* fields = (MyIl2CppFieldInfo*)Marshal.AllocHGlobal(sizeof(MyIl2CppFieldInfo) * fieldCount);
 
             int offset = (int)klass->actualSize;
+            int initialOffset = offset;
             int fieldsAdded = 0;
 
-            IntPtr AddField(string name, IntPtr type, int length, int align = 0)
+            IntPtr AddField(string name, IntPtr type, int length, out int structOffset, int align = 0)
             {
                 var newType = (MyIl2CppType*)Marshal.AllocHGlobal(Marshal.SizeOf<MyIl2CppType>());
                 *newType = *(MyIl2CppType*)type;
@@ -217,32 +217,40 @@ namespace FieldInjector
 
                 offset += length;
 
+                structOffset = offset - initialOffset;
+
                 return (IntPtr)destPtr;
             }
 
-            foreach (var bf in this.blitFields)
+            for (int i = 0; i < this.blitFields.Length; i++)
             {
+                ref var bf = ref this.blitFields[i];
                 var type = bf.field.FieldType;
+                if (type.IsEnum) type = type.GetEnumUnderlyingType();
                 var fieldClass = GetClassPointerForType(type);
                 var fieldType = il2cpp_class_get_type(fieldClass);
 
-                AddField(bf.field.Name, fieldType, bf.length);
+                AddField(bf.field.Name, fieldType, bf.length, out bf.offset);
             }
 
-            foreach (var ss in this.subStructFields)
+            for (int i = 0; i < this.subStructFields.Length; i++) 
             {
+                ref var ss = ref this.subStructFields[i];
                 var type = ss.field.FieldType;
                 var fieldClass = GetClassPointerForType(type);
                 var fieldType = il2cpp_class_get_type(fieldClass);
 
-                AddField(ss.field.Name, fieldType, ss.length);
+                AddField(ss.field.Name, fieldType, ss.length, out ss.offset);
             }
 
-            foreach (var pf in this.pointerMarshalFields)
+            for (int i = 0; i < this.pointerMarshalFields.Length; i++)
             {
+                ref var pf = ref this.pointerMarshalFields[i];
                 var size = pf.marshaller.GetFieldSize(out var align);
-                pf.marshaller.NativeField = AddField(pf.field.Name, pf.marshaller.FieldType, size, align);
+                pf.marshaller.NativeField = AddField(pf.field.Name, pf.marshaller.FieldType, size, out pf.offset, align);
             }
+
+            this.offsetsSet = true;
 
             klass->field_count = (ushort)fieldsAdded;
             klass->fields = fields;
@@ -269,6 +277,8 @@ namespace FieldInjector
 
         public Expression GenerateSerialiser(Expression managedStruct, Expression targetPtr)
         {
+            if (!this.offsetsSet) { throw new NotSupportedException("fields haven't been written yet"); }
+
             if (this.IsBlittable)
             {
                 MethodInfo blit = typeof(StructSerialiser<T>).GetMethod("BlitThere").MakeGenericMethod(this.t);
@@ -280,7 +290,7 @@ namespace FieldInjector
             foreach (var field in this.blitFields)
             {
                 MethodInfo blit = typeof(StructSerialiser<T>).GetMethod("BlitThere", BindingFlags.Static | BindingFlags.NonPublic).MakeGenericMethod(field.field.FieldType);
-                instrs.Add(Expression.Call(blit, managedStruct, Expression.Add(targetPtr, Expression.Constant(field.offset))));
+                instrs.Add(Expression.Call(blit, Expression.Field(managedStruct, field.field), Expression.Add(targetPtr, Expression.Constant(field.offset))));
             }
 
             foreach (var field in this.subStructFields)
@@ -314,6 +324,11 @@ namespace FieldInjector
         private static unsafe void BlitThere<T2>(T2 value, IntPtr destObj) where T2 : unmanaged
         {
             *(T2*)destObj = value;
+        }
+
+        private static unsafe T2 BlitHere<T2>(IntPtr ptr) where T2 : unmanaged
+        {
+            return *(T2*)ptr;
         }
 
         private static unsafe void BlitHere(ref T me, IntPtr src)
