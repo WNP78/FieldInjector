@@ -67,8 +67,6 @@ namespace FieldInjector.FieldSerialisers
 
         public override IEnumerable<Expression> GetSerialiseExpression(Expression monoObj, Expression nativePtr)
         {
-            var freeMethod = new Action<IntPtr>(Marshal.FreeHGlobal).Method;
-
             if (this.NativeField == IntPtr.Zero)
             {
                 throw new InvalidOperationException("Something went very wrong");

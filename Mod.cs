@@ -39,6 +39,19 @@ namespace FieldInjector
             Logging.Msg("Injecting test class");
             SerialisationHandler.Inject<TestMBSt>(debugLevel: 5);
 
+            Logging.Msg("========");
+            Logging.Msg("Debug Info:");
+            unsafe
+            {
+                //var type = (MyIl2CppClass*)Util.GetClassPointerForType<Vector3>();
+                //Logging.Msg(type->Debug());
+                //Logging.Msg("=======");
+                //type = (MyIl2CppClass*)Util.GetClassPointerForType<TestStruct>();
+                //Logging.Msg((IntPtr)type);
+                //Logging.Msg(type->Debug());
+                Logging.Msg("=======");
+            }
+
             /*
             Logging.Msg("Creating test object");
             var g1 = new GameObject("Test Source");

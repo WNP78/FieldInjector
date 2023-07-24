@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Runtime.InteropServices;
+using System.Text;
 using UnhollowerBaseLib;
 using UnhollowerBaseLib.Runtime;
 using UnhollowerBaseLib.Runtime.VersionSpecific.Type;
@@ -15,6 +17,33 @@ namespace FieldInjector
         #region Utility
 
         public static int LogLevel = 0;
+
+        public static string DumpExpressionTree(Expression root)
+        {
+            StringBuilder builder = new StringBuilder("Expression dump");
+
+            void dump(Expression exp, string indent)
+            {
+                builder.Append(indent);
+                if (exp is BlockExpression block)
+                {
+                    builder.Append($"Block: {string.Join(", ", block.Variables.Select(v => $"[{v.Type} {v.Name}]"))}\n");
+                    indent += "  ";
+                    foreach (var ce in block.Expressions)
+                    {
+                        dump(exp, indent);
+                    }
+                }
+                else
+                {
+                    builder.Append(exp.ToString());
+                    builder.Append('\n');
+                }
+            }
+
+            dump(root, "    ");
+            return builder.ToString();
+        }
 
         public static void Log(string message, int level)
         {

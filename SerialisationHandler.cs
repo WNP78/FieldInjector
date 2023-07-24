@@ -15,6 +15,7 @@ using UnhollowerBaseLib.Runtime;
 using UnhollowerBaseLib.Runtime.VersionSpecific.Class;
 using UnhollowerBaseLib.Runtime.VersionSpecific.MethodInfo;
 using UnhollowerRuntimeLib;
+using UnhollowerRuntimeLib.XrefScans;
 using UnityEngine;
 using static FieldInjector.Util;
 using static MelonLoader.MelonLogger;
@@ -226,6 +227,7 @@ namespace FieldInjector
 
         private static IntPtr InjectStruct(Type type)
         {
+            HookGetTypeInfo();
             IntPtr result = GetClassPointerForType(type);
             if (result != IntPtr.Zero) { return result; }
             if (type.IsGenericType || type.IsEnum || !type.IsValueType)
@@ -332,21 +334,34 @@ namespace FieldInjector
             p->element_size = 0;
             p->token = 0; // il2cpp doesn't seem to care about this
 
-            p->vtable_count = baseKlass->vtable_count; //  todo copy vtable
+            p->vtable_count = baseKlass->vtable_count;
             p->genericRecursionDepth = 1;
             p->rank = 0;
-            p->flags = Il2CppClassAttributes.TYPE_ATTRIBUTE_PUBLIC | Il2CppClassAttributes.TYPE_ATTRIBUTE_EXPLICIT_LAYOUT | Il2CppClassAttributes.TYPE_ATTRIBUTE_SEALED;
+            p->flags = Il2CppClassAttributes.TYPE_ATTRIBUTE_PUBLIC | Il2CppClassAttributes.TYPE_ATTRIBUTE_SEQUENTIAL_LAYOUT | Il2CppClassAttributes.TYPE_ATTRIBUTE_SEALED | Il2CppClassAttributes.TYPE_ATTRIBUTE_SERIALIZABLE;
 
             p->minimumAlignment = 8;
             p->naturalAligment = 8;
             p->packingSize = 0;
 
             p->bitfield =
-                MyIl2CppClass.ClassFlags.initialized_and_no_error |
-                MyIl2CppClass.ClassFlags.valuetype;
+                MyIl2CppClass.ClassFlags.initialized_and_no_error
+                | MyIl2CppClass.ClassFlags.initialized
+                | MyIl2CppClass.ClassFlags.is_vtable_initialized;
+
+            var vtablePtr = (VirtualInvokeData*)Wrap((Il2CppClass*)p).VTable;
+            var parentVtablePtr = (VirtualInvokeData*)Wrap((Il2CppClass*)basePtr).VTable;
+            for (int i = 0; i < baseKlass->vtable_count; i++)
+            {
+                vtablePtr[i] = parentVtablePtr[i];
+                Log($"vtablePtr = {(IntPtr)(vtablePtr + i)}", 5);
+                Log($"vtablePtr method = {(IntPtr)vtablePtr[i].method}", 5);
+                if (vtablePtr[i].method != null) Log($"copying vtable {Marshal.PtrToStringAnsi(Wrap(vtablePtr[i].method).Name)}", 5);
+            }
 
             AddToClassFromNameDictionary(type, (IntPtr)p);
             _injectedStructs[type] = (IntPtr)p;
+            RuntimeSpecificsStore.SetClassInfo((IntPtr)p, true, true);
+            SetClassPointerForType(type, (IntPtr)p);
 
             return (IntPtr)p;
         }
@@ -430,6 +445,7 @@ namespace FieldInjector
                 {
                     Log($"Initial injection for struct {t.Name}", 2);
                     structPtrs[i] = InjectStruct(t);
+                    Log($"Struct {t.Name} injected at 0x{(ulong)structPtrs[i]:X}", 3);
                 }
                 catch (Exception ex)
                 {
@@ -747,5 +763,72 @@ namespace FieldInjector
         }
 
         #endregion Finalize patch
+
+        #region Hook GetClassOrElementClass
+
+        [DllImport("kernel32", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
+        static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+
+        [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Ansi)]
+        static extern IntPtr LoadLibrary([MarshalAs(UnmanagedType.LPStr)] string lpFileName);
+
+        delegate MyIl2CppClass* GetTypeInfoFromTypeDelegate(MyIl2CppType* type);
+
+        private static GetTypeInfoFromTypeDelegate originalGetTypeInfoDelegate;
+
+        private static bool _typeInfoPatched = false;
+
+        static unsafe MyIl2CppClass* GetTypeInfoFromTypePatch(MyIl2CppType* type)
+        {
+            if (type->type == Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE || type->type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS)
+            {
+                if (_fakeTokenClasses.TryGetValue((long)type->data, out var classPtr))
+                {
+                    return (MyIl2CppClass*)classPtr;
+                }
+            }
+
+            while (originalGetTypeInfoDelegate == null)
+            {
+                Thread.Sleep(1);
+            }
+
+            return originalGetTypeInfoDelegate(type);
+        }
+
+        private static void HookGetTypeInfo()
+        {
+            if (_typeInfoPatched) return;
+            _typeInfoPatched = true;
+
+            Log("Patching get type from info", 3);
+            var ga = LoadLibrary("GameAssembly.dll");
+
+            var class_from_type = GetProcAddress(ga, nameof(IL2CPP.il2cpp_class_from_il2cpp_type));
+            var get_class_or_element_class = GetProcAddress(ga, nameof(IL2CPP.il2cpp_type_get_class_or_element_class));
+
+            // Il2CppClass * Class::FromIl2CppType(Il2CppType *type,bool throwOnError)
+            var classFromType = XrefScannerLowLevelCustom.JumpTargets(class_from_type).Single();
+            Log($"classFromType = 0x{(ulong)classFromType:X}", 4);
+
+            // Il2CppClass* Type::GetClassOrElementClass(Il2CppType* type)
+            var getClassOrElementClass = XrefScannerLowLevelCustom.JumpTargets(get_class_or_element_class).Single();
+            Log($"getClassOrElementClass = 0x{(ulong)getClassOrElementClass:X}", 4);
+
+            // Il2CppClass* MetadataCache::GetTypeInfoFromType(Il2CppType* type)
+            Log($"jumptargets: {string.Join(", ", XrefScannerLowLevelCustom.JumpTargets(getClassOrElementClass).Select(p => ((long)p).ToString("X")))}", 5);
+            var cacheGetTypeInfoFromType = (from tgt in XrefScannerLowLevelCustom.JumpTargets(getClassOrElementClass)
+                                            where tgt != classFromType select tgt).Single();
+            Log($"cacheGetTypeInfoFromType = 0x{(ulong)cacheGetTypeInfoFromType:X}", 4);
+
+            // Il2CppClass* GlobalMetadata::GetTypeInfoFromType(Il2CppClass* type)
+            var metadataGetTypeInfoFromType = XrefScannerLowLevelCustom.JumpTargets(cacheGetTypeInfoFromType).Single();
+            Log($"metadataGetTypeInfoFromType = 0x{(ulong)metadataGetTypeInfoFromType:X}", 4);
+
+            GetTypeInfoFromTypeDelegate ourDel = GetTypeInfoFromTypePatch;
+            originalGetTypeInfoDelegate = ClassInjector.Detour.Detour(metadataGetTypeInfoFromType, ourDel);
+        }
+
+        #endregion Hook
     }
 }

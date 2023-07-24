@@ -1,8 +1,9 @@
-﻿using System;
+﻿using MelonLoader;
+using System;
+using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Runtime.InteropServices;
-using UnhollowerBaseLib.Runtime;
+using UnityEngine;
 using static UnhollowerBaseLib.IL2CPP;
 using static UnhollowerBaseLib.Runtime.UnityVersionHandler;
 
@@ -12,6 +13,8 @@ namespace FieldInjector.FieldSerialisers
     {
         private readonly IntPtr fieldType;
         private readonly IntPtr fieldClass;
+        private int fieldLength;
+        private uint fieldAlign;
 
         public CustomStructField(FieldInfo field) : base(field)
         {
@@ -26,42 +29,103 @@ namespace FieldInjector.FieldSerialisers
             }
 
             this.fieldType = il2cpp_class_get_type(this.fieldClass);
+            this.fieldLength = il2cpp_class_value_size(this.fieldClass, ref this.fieldAlign);
         }
 
         public override IntPtr FieldType => this.fieldType;
 
+        internal unsafe int Offset => ((MyIl2CppFieldInfo*)this.NativeField)->offset;
+
         public override int GetFieldSize(out int align)
         {
-            align = 0;
-            return (int)(Wrap((Il2CppClass*)this.fieldClass).ActualSize - Marshal.SizeOf<Il2CppObject>());
+            align = (int)this.fieldAlign;
+            return this.fieldLength;
+        }
+
+        internal static unsafe void ClearMem(IntPtr target, int length)
+        {
+            if (length % 8 == 0)
+            {
+                for (int i = 0; i < length / 8; i++)
+                {
+                    ((ulong*)target)[i] = 0;
+                }
+            }
+            else if (length % 4 == 0)
+            {
+                for (int i = 0; i < length / 4; i++)
+                {
+                    ((uint*)target)[i] = 0;
+                }
+            }
+            else if (length % 2 == 0)
+            {
+                for (int i = 0; i < length / 2; i++)
+                {
+                    ((ushort*)target)[i] = 0;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < length; i++)
+                {
+                    ((byte*)target)[i] = 0;
+                }
+            }
+        }
+
+        internal static unsafe IntPtr GetFieldPtrAndClear(IntPtr obj, IntPtr field, int length)
+        {
+            var offset = ((MyIl2CppFieldInfo*)field)->offset;
+            IntPtr ptr = obj + offset;
+            ClearMem(ptr, length);
+            return ptr;
+        }
+
+        internal static unsafe IntPtr GetFieldPtr(IntPtr obj, IntPtr field)
+        {
+            var offset = ((MyIl2CppFieldInfo*)field)->offset;
+            return obj + offset;
+        }
+
+        public override IEnumerable<Expression> GetSerialiseExpression(Expression monoObj, Expression nativePtr)
+        {
+            if (this.NativeField == IntPtr.Zero)
+            {
+                throw new InvalidOperationException("Something went very wrong");
+            }
+
+            Expression monoValue = Expression.Field(monoObj, this.field);
+
+            MethodInfo getFieldPtr = ((Func<IntPtr, IntPtr, int, IntPtr>)GetFieldPtrAndClear).Method;
+
+            var ptrVar = Expression.Variable(typeof(IntPtr), "fieldPtr");
+            var managedVar = Expression.Variable(typeof(T), "managedValue");
+            Expression fieldPtr = Expression.Call(getFieldPtr, nativePtr, Expression.Constant(this.NativeField), Expression.Constant(this.fieldLength));
+            yield return Expression.Block(new ParameterExpression[] { ptrVar, managedVar },
+                Expression.Assign(ptrVar, fieldPtr),
+                Expression.Assign(managedVar, monoValue),
+                StructSerialiser<T>.Instance.GenerateSerialiser(managedVar, ptrVar));
+        }
+
+        public override IEnumerable<Expression> GetDeserialiseExpression(Expression monoObj, Expression nativePtr, Expression fieldPtr)
+        {
+            var getFieldPtr = ((Func<IntPtr, IntPtr, IntPtr>)GetFieldPtr).Method;
+            var targetPtr = Expression.Add(nativePtr, Expression.Constant(this.Offset));
+            var deserialisedStruct = StructSerialiser<T>.Instance.GenerateDeserialiser(targetPtr);
+            yield return Expression.Assign(
+                Expression.Field(monoObj, this.field),
+                deserialisedStruct);
         }
 
         public override Expression GetManagedToNativeExpression(Expression monoObj)
         {
-            // temp var to store the pointer to the il2cpp object
-            var temp = Expression.Variable(typeof(IntPtr), "ptr");
-
-            // create il2cpp boxed struct
-            var obj = Expression.Call(((Func<IntPtr, IntPtr>)il2cpp_object_new).Method, Expression.Constant(this.fieldClass));
-
-            // get the struct data (skip past the object headers)
-            var dataPtr = Expression.Call(((Func<IntPtr, IntPtr>)il2cpp_object_unbox).Method, temp);
-
-            // run serialiser on struct data ptr
-            var serialiser = StructSerialiser<T>.Instance.GenerateSerialiser(monoObj, dataPtr);
-
-            // combine into a block expression
-            return Expression.Block(new ParameterExpression[] { temp },
-                Expression.Assign(temp, obj), // temp = newobject
-                serialiser, // serialise(temp.data)
-                temp); // return temp
+            throw new NotImplementedException(); // not called since we overrode GetSerialiseExpression
         }
 
         public override Expression GetNativeToManagedExpression(Expression nativePtr)
         {
-            var dataPtr = Expression.Call(((Func<IntPtr, IntPtr>)il2cpp_object_unbox).Method, nativePtr);
-            var returnStruct = StructSerialiser<T>.Instance.GenerateDeserialiser(nativePtr);
-            return returnStruct;
+            throw new NotImplementedException(); // not called since we overrode GetDeserialiseExpression
         }
     }
 }

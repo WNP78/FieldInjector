@@ -195,6 +195,7 @@ namespace FieldInjector
             s.Append($"naturalAligment = {this.naturalAligment}\n");
             s.Append($"packingSize = {this.packingSize}\n");
             s.Append($"bitfield = {this.bitfield}\n");
+            s.Append($"bitfield(raw) = {(ushort)this.bitfield}\n");
 
             s.Append($"implementedInterfaces[{this.interfaces_count}]:\n");
             for (int i = 0; i < this.interfaces_count; i++)
@@ -210,20 +211,22 @@ namespace FieldInjector
         public enum ClassFlags : ushort
         {
             None = 0,
+
             initialized_and_no_error = 1 << 0,
-            valuetype = 1 << 1,
-            initialized = 1 << 2,
-            enumtype = 1 << 3,
+            initialized = 1 << 1,
+            enumtype = 1 << 2,
+            nullabletype = 1 << 3,
             is_generic = 1 << 4,
-            has_references = 1 << 5,
+            has_references = 1 << 5, // valid when size_inited is true
             init_pending = 1 << 6,
-            size_inited = 1 << 7,
-            has_finalize = 1 << 8,
-            has_cctor = 1 << 9,
-            is_blittable = 1 << 10,
-            is_import_or_windows_runtime = 1 << 11,
-            is_vtable_initialized = 1 << 12,
-            has_initialization_error = 1 << 13,
+            size_init_pending = 1 << 7,
+            size_inited = 1 << 8,
+            has_finalize = 1 << 9,
+            has_cctor = 1 << 10,
+            is_blittable = 1 << 11,
+            is_import_or_windows_runtime = 1 << 12,
+            is_vtable_initialized = 1 << 13,
+            is_byref_like = 1 << 14,
         }
     }
 

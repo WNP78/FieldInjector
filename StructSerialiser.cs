@@ -4,6 +4,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using UnhollowerBaseLib.Runtime;
+using UnityEngine;
 using static FieldInjector.Util;
 using static MelonLoader.MelonLogger;
 using static UnhollowerBaseLib.IL2CPP;
@@ -131,6 +132,11 @@ namespace FieldInjector
             }
         }
 
+        private unsafe static IntPtr GetPtrValue(IntPtr pp)
+        {
+            return *(IntPtr*)pp;
+        }
+
         private DeserialiseDelegate GetMarshalFunction()
         {
             if (!this.offsetsSet) { throw new NotSupportedException($"fields haven't been written yet for {typeof(T)}"); }
@@ -147,9 +153,23 @@ namespace FieldInjector
                 var tgt = Expression.Parameter(typeof(T).MakeByRefType(), "tgt");
                 var inPtr = Expression.Parameter(typeof(IntPtr), "inPtr");
                 //expressions.Add(Expression.Assign(tgt, Expression.Default(typeof(T)))); // initialise variable
+                void LogExpr(string txt)
+                {
+                    expressions.Add(
+                        Expression.Call(
+                            ((Action<string>)Msg).Method, Expression.Constant(txt)));
+                }
+
+                void LogExprAdd(string txt, Expression expr)
+                {
+                    expressions.Add(
+                        Expression.Call(
+                            ((Action<string>)Msg).Method, Expression.Call(((Func<string, string, string>)string.Concat).Method, Expression.Constant(txt), Expression.Call(expr, ((Func<string>)new object().ToString).Method, null))));
+                }
 
                 foreach (var bf in this.blitFields)
                 {
+                    //LogExpr($"Deserialise {bf.field.FieldType.Name} {bf.field.Name}");
                     // tgt.field = Marshal.PtrToStructure<T>(inPtr + offset);
                     var mm = ((Func<IntPtr, float>)BlitHere<float>).Method.GetGenericMethodDefinition().MakeGenericMethod(bf.field.FieldType);
 
@@ -159,21 +179,33 @@ namespace FieldInjector
                             Expression.Call(
                                 mm,
                                 Expression.Add(inPtr, Expression.Constant(bf.offset)))));
+
+                    //LogExprAdd("Result: ", Expression.Field(tgt, bf.field));
                 }
 
                 foreach (var pf in this.pointerMarshalFields)
                 {
+                    //LogExpr($"Deserialise {pf.field.FieldType.Name} {pf.field.Name}");
+                    //LogExprAdd($"field offset is {pf.offset}, field location is ", Expression.Add(inPtr, Expression.Constant(pf.offset)));
                     // tgt.field = NativeToManaged(inPtr + offset);
+                    Expression fv = Expression.Call(((Func<IntPtr, IntPtr>)GetPtrValue).Method, Expression.Add(inPtr, Expression.Constant(pf.offset)));
+                    //LogExprAdd("field value is ", fv);
 
                     expressions.Add(
                         Expression.Assign(
                             Expression.Field(tgt, pf.field),
-                            pf.marshaller.GetNativeToManagedExpression(
-                                Expression.Add(inPtr, Expression.Constant(pf.offset)))));
+                            Expression.Condition(
+                                Expression.Equal(fv, Expression.Constant(IntPtr.Zero)),
+                                Expression.Default(pf.field.FieldType),
+                                pf.marshaller.GetNativeToManagedExpression(fv))));
+
+                    if (pf.field.Name == "objectList") { Msg(DumpExpressionTree(expressions[expressions.Count - 1])); }
+                    //LogExprAdd("Result: ", Expression.Call(Expression.Field(tgt, pf.field), ((
                 }
 
                 foreach (var sf in this.subStructFields)
                 {
+                    //LogExpr($"Deserialise {sf.field.FieldType.Name} {sf.field.Name}");
                     // fieldType.MarshalFunction(ref tgt.field)
 
                     expressions.Add(
@@ -181,6 +213,7 @@ namespace FieldInjector
                             Expression.Constant(GetSerialiser(sf.field.FieldType).MarshalFunction),
                             Expression.Field(tgt, sf.field),
                             Expression.Add(inPtr, Expression.Constant(sf.offset))));
+                    //LogExprAdd("Result: ", Expression.Field(tgt, sf.field));
                 }
 
                 this.marshalFunction = Expression.Lambda<DeserialiseDelegate>(Expression.Block(expressions), tgt, inPtr).Compile();
@@ -257,6 +290,7 @@ namespace FieldInjector
             klass->actualSize += (uint)offset;
             klass->instance_size += (uint)offset;
             klass->native_size += offset;
+            klass->bitfield |= MyIl2CppClass.ClassFlags.size_inited;
         }
 
         public static IStructSerialiser GetSerialiser(Type t1)
