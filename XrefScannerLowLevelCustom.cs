@@ -1,4 +1,5 @@
 ﻿using Iced.Intel;
+using MelonLoader;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -8,6 +9,31 @@ namespace FieldInjector
 {
     internal static class XrefScannerLowLevelCustom
     {
+        public unsafe static IEnumerable<IntPtr> StaticTargets(IntPtr codeStart)
+        {
+            if (codeStart == IntPtr.Zero) throw new NullReferenceException(nameof(codeStart));
+
+            var stream = new UnmanagedMemoryStream((byte*)codeStart, 1000, 1000, FileAccess.Read);
+            var codeReader = new StreamCodeReader(stream);
+            var decoder = Decoder.Create(IntPtr.Size * 8, codeReader);
+            decoder.IP = (ulong)codeStart;
+
+            return StaticMemTargetsImpl(decoder);
+        }
+
+        private static IEnumerable<IntPtr> StaticMemTargetsImpl(Decoder decoder)
+        {
+            for (var i = 0; i < 5; i++)
+            {
+                decoder.Decode(out var instruction);
+                if (decoder.LastError == DecoderError.NoMoreBytes) yield break;
+                if (instruction.Mnemonic == Mnemonic.Int3) yield break;
+
+                MelonLogger.Msg(instruction.ToString());
+                MelonLogger.Msg($"{instruction.Op0Kind} {instruction.Op0Register}  | {instruction.Op1Kind} {instruction.Op1Register}");
+            }
+        }
+
         public unsafe static IEnumerable<IntPtr> JumpTargets(IntPtr codeStart)
         {
             if (codeStart == IntPtr.Zero) throw new NullReferenceException(nameof(codeStart));

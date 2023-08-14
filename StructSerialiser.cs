@@ -75,6 +75,7 @@ namespace FieldInjector
             foreach (var field in fields)
             {
                 var ft = field.FieldType;
+                if (field.IsNotSerialized) { continue; }
 
                 if (ft.IsPrimitive || ft.IsEnum)
                 {
@@ -123,12 +124,17 @@ namespace FieldInjector
                 }
             }
 
-            this.IsBlittable = subStructFields.Count == 0 && pointerMarshalFields.Count == 0;
+            this.IsBlittable = blitFields.Count == fields.Length;
             this.blitFields = blitFields.ToArray();
             if (!this.IsBlittable)
             {
                 this.pointerMarshalFields = pointerMarshalFields.ToArray();
                 this.subStructFields = subStructFields.ToArray();
+            }
+            else
+            {
+                this.pointerMarshalFields = new PointerMarshalField[0];
+                this.subStructFields = new SubStructField[0];
             }
         }
 
@@ -225,71 +231,80 @@ namespace FieldInjector
         public unsafe void WriteFields(MyIl2CppClass* klass)
         {
             int fieldCount = this.blitFields.Length + this.pointerMarshalFields.Length + this.subStructFields.Length;
-            MyIl2CppFieldInfo* fields = (MyIl2CppFieldInfo*)Marshal.AllocHGlobal(sizeof(MyIl2CppFieldInfo) * fieldCount);
-
             int offset = (int)klass->actualSize;
             int initialOffset = offset;
             int fieldsAdded = 0;
 
-            IntPtr AddField(string name, IntPtr type, int length, out int structOffset, int align = 0)
+            if (fieldCount > 0)
             {
-                var newType = (MyIl2CppType*)Marshal.AllocHGlobal(Marshal.SizeOf<MyIl2CppType>());
-                *newType = *(MyIl2CppType*)type;
-                newType->attrs = (ushort)Il2CppSystem.Reflection.FieldAttributes.Public;
+                MyIl2CppFieldInfo* fields = (MyIl2CppFieldInfo*)Marshal.AllocHGlobal(sizeof(MyIl2CppFieldInfo) * fieldCount);
 
-                offset = AlignTo(offset, align);
-
-                var destPtr = fields + fieldsAdded++;
-                *destPtr = new MyIl2CppFieldInfo()
+                IntPtr AddField(string name, IntPtr type, int length, out int structOffset, int align = 0)
                 {
-                    name = Marshal.StringToHGlobalAnsi(name),
-                    offset = offset,
-                    parent = (Il2CppClass*)klass,
-                    type = (Il2CppTypeStruct*)newType,
-                };
+                    var newType = (MyIl2CppType*)Marshal.AllocHGlobal(Marshal.SizeOf<MyIl2CppType>());
+                    *newType = *(MyIl2CppType*)type;
+                    newType->attrs = (ushort)Il2CppSystem.Reflection.FieldAttributes.Public;
 
-                offset += length;
+                    offset = AlignTo(offset, align);
 
-                structOffset = offset - initialOffset;
+                    var destPtr = fields + fieldsAdded++;
+                    *destPtr = new MyIl2CppFieldInfo()
+                    {
+                        name = Marshal.StringToHGlobalAnsi(name),
+                        offset = offset,
+                        parent = (Il2CppClass*)klass,
+                        type = (Il2CppTypeStruct*)newType,
+                    };
 
-                return (IntPtr)destPtr;
+                    structOffset = offset - initialOffset;
+
+                    offset += length;
+
+                    return (IntPtr)destPtr;
+                }
+
+                for (int i = 0; i < this.blitFields.Length; i++)
+                {
+                    ref var bf = ref this.blitFields[i];
+                    var type = bf.field.FieldType;
+                    if (type.IsEnum) type = type.GetEnumUnderlyingType();
+                    var fieldClass = GetClassPointerForType(type);
+                    var fieldType = il2cpp_class_get_type(fieldClass);
+
+                    AddField(bf.field.Name, fieldType, bf.length, out bf.offset);
+                }
+
+                for (int i = 0; i < this.subStructFields.Length; i++)
+                {
+                    ref var ss = ref this.subStructFields[i];
+                    var type = ss.field.FieldType;
+                    var fieldClass = GetClassPointerForType(type);
+                    var fieldType = il2cpp_class_get_type(fieldClass);
+
+                    AddField(ss.field.Name, fieldType, ss.length, out ss.offset);
+                }
+
+                for (int i = 0; i < this.pointerMarshalFields.Length; i++)
+                {
+                    ref var pf = ref this.pointerMarshalFields[i];
+                    var size = pf.marshaller.GetFieldSize(out var align);
+                    pf.marshaller.NativeField = AddField(pf.field.Name, pf.marshaller.FieldType, size, out pf.offset, align);
+                }
+
+                klass->fields = fields;
             }
-
-            for (int i = 0; i < this.blitFields.Length; i++)
+            else
             {
-                ref var bf = ref this.blitFields[i];
-                var type = bf.field.FieldType;
-                if (type.IsEnum) type = type.GetEnumUnderlyingType();
-                var fieldClass = GetClassPointerForType(type);
-                var fieldType = il2cpp_class_get_type(fieldClass);
-
-                AddField(bf.field.Name, fieldType, bf.length, out bf.offset);
-            }
-
-            for (int i = 0; i < this.subStructFields.Length; i++) 
-            {
-                ref var ss = ref this.subStructFields[i];
-                var type = ss.field.FieldType;
-                var fieldClass = GetClassPointerForType(type);
-                var fieldType = il2cpp_class_get_type(fieldClass);
-
-                AddField(ss.field.Name, fieldType, ss.length, out ss.offset);
-            }
-
-            for (int i = 0; i < this.pointerMarshalFields.Length; i++)
-            {
-                ref var pf = ref this.pointerMarshalFields[i];
-                var size = pf.marshaller.GetFieldSize(out var align);
-                pf.marshaller.NativeField = AddField(pf.field.Name, pf.marshaller.FieldType, size, out pf.offset, align);
+                klass->fields = (MyIl2CppFieldInfo*)IntPtr.Zero;
             }
 
             this.offsetsSet = true;
 
+            int addedSize = offset - initialOffset;
             klass->field_count = (ushort)fieldsAdded;
-            klass->fields = fields;
-            klass->actualSize += (uint)offset;
-            klass->instance_size += (uint)offset;
-            klass->native_size += offset;
+            klass->actualSize += (uint)addedSize;
+            klass->instance_size += (uint)addedSize;
+            klass->native_size += addedSize;
             klass->bitfield |= MyIl2CppClass.ClassFlags.size_inited;
         }
 
@@ -315,7 +330,7 @@ namespace FieldInjector
 
             if (this.IsBlittable)
             {
-                MethodInfo blit = typeof(StructSerialiser<T>).GetMethod("BlitThere").MakeGenericMethod(this.t);
+                MethodInfo blit = typeof(StructSerialiser<T>).GetMethod("BlitThere", BindingFlags.Static | BindingFlags.NonPublic).MakeGenericMethod(this.t);
                 return Expression.Call(blit, managedStruct, targetPtr);
             }
 
@@ -367,7 +382,7 @@ namespace FieldInjector
 
         private static unsafe void BlitHere(ref T me, IntPtr src)
         {
-            me = Marshal.PtrToStructure<T>(src);
+            me = *(T*)src;
         }
     }
 }

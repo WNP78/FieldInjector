@@ -10,6 +10,9 @@
   </Target>
 
   <ItemGroup>
+    <Reference Include="Iced">
+      <HintPath>$(BONELAB_DIR)\MelonLoader\Managed\Iced.dll</HintPath>
+    </Reference>
     <Reference Include="Il2Cppmscorlib">
       <HintPath>$(BONELAB_DIR)\MelonLoader\Managed\Il2Cppmscorlib.dll</HintPath>
     </Reference>

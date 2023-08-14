@@ -30,6 +30,7 @@ namespace FieldInjector.FieldSerialisers
 
             this.fieldType = il2cpp_class_get_type(this.fieldClass);
             this.fieldLength = il2cpp_class_value_size(this.fieldClass, ref this.fieldAlign);
+            MelonLogger.Msg($"CSF Length: {this.fieldLength}");
         }
 
         public override IntPtr FieldType => this.fieldType;

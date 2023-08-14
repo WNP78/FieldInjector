@@ -154,7 +154,7 @@ namespace FieldInjector
 
         private static ConcurrentDictionary<long, IntPtr> _fakeTokenClasses;
 
-        private static IntPtr _fakeImage;
+        internal static IntPtr _fakeImage;
         private static IntPtr _fakeAssembly;
         private static bool _initImage;
         internal static Dictionary<Type, IntPtr> _injectedStructs = new Dictionary<Type, IntPtr>();
@@ -165,7 +165,9 @@ namespace FieldInjector
                 BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static, Type.DefaultBinder,
                 new Type[] { typeof(Type), typeof(IntPtr) }, null));
 
-        private static void InitImage()
+        private delegate IntPtr GetManagerFromContextDelegate(int index);
+
+        internal static void InitImage()
         {
             if (_initImage) return; 
 
@@ -187,6 +189,19 @@ namespace FieldInjector
             _fakeImage = img.Pointer;
             _fakeAssembly = asm.Pointer;
             _initImage = true;
+
+
+            // time for the hack to add our image to the script managers image list
+            // struct injection won't work if it isn't in there
+            IntPtr codePtr = IL2CPP.il2cpp_resolve_icall("UnityEngine.LayerMask::LayerToName");
+            var getTagManager = XrefScannerLowLevelCustom.JumpTargets(codePtr).First();
+            var getManagerFromContext = XrefScannerLowLevelCustom.JumpTargets(getTagManager).Single();
+            var getmanager = Marshal.GetDelegateForFunctionPointer<GetManagerFromContextDelegate>(getManagerFromContext);
+            var scriptingManager = getmanager(5); // we got the scripting manager!
+            var scriptImages = scriptingManager + 0x228; // here we gooooooo
+            var array = (DynamicArrayOfPtrs*)scriptImages;
+            array->InsertReplaceNull(_fakeImage); // hope there's a blank spot in there for us!
+            Log($"Added fake image to script manager: 0x{(ulong)_fakeImage:X}, new size {array->size}", 2);
         }
 
         private static IntPtr FakeImage
@@ -390,6 +405,7 @@ namespace FieldInjector
                 List<Type> list = null;
                 foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
                 {
+                    if (field.IsNotSerialized) { continue; }
                     if (structs.Contains(field.FieldType))
                     {
                         if (list == null) { list = new List<Type>(); }
@@ -767,10 +783,10 @@ namespace FieldInjector
         #region Hook GetClassOrElementClass
 
         [DllImport("kernel32", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
-        static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+        internal static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
 
         [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Ansi)]
-        static extern IntPtr LoadLibrary([MarshalAs(UnmanagedType.LPStr)] string lpFileName);
+        internal static extern IntPtr LoadLibrary([MarshalAs(UnmanagedType.LPStr)] string lpFileName);
 
         delegate MyIl2CppClass* GetTypeInfoFromTypeDelegate(MyIl2CppType* type);
 
