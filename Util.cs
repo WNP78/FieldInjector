@@ -164,7 +164,7 @@ namespace FieldInjector
             {
                 throw new NotSupportedException("Trying to get pointer for enum type");
             }
-            
+
             if (type.ContainsGenericParameters)
             {
                 Error($"tried to get class ptr for incomplete generic: {type}");

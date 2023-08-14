@@ -1,13 +1,10 @@
-﻿using MelonLoader;
-using System;
+﻿using System;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using UnhollowerBaseLib;
 using static FieldInjector.Util;
 using static MelonLoader.MelonLogger;
 using static UnhollowerBaseLib.IL2CPP;
-using ILCollections = Il2CppSystem.Collections.Generic;
 
 namespace FieldInjector.FieldSerialisers
 {
@@ -136,7 +133,7 @@ namespace FieldInjector.FieldSerialisers
         public static Il2CppStructArray<TC> ConvertArray<TM, TC>(TM[] array) where TM : unmanaged where TC : unmanaged
         {
             var res = new Il2CppStructArray<TC>(array.Length);
-            
+
             fixed (TM* srcPtr = array)
             {
                 for (int i = 0; i < array.Length; i++)

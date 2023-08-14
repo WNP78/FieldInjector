@@ -10,7 +10,6 @@ using static UnhollowerBaseLib.Runtime.UnityVersionHandler;
 
 namespace FieldInjector.FieldSerialisers
 {
-
     internal unsafe class StructField : SerialisedField
     {
         public StructField(FieldInfo field) : base(field)

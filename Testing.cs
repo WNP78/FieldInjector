@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
-using UnhollowerBaseLib;
 using UnityEngine;
 using Logging = MelonLoader.MelonLogger;
 
@@ -11,7 +10,6 @@ namespace FieldInjector.Test
 {
     internal static class Testing
     {
-
         [DllImport("Kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
         internal static extern void DebugBreak();
 
@@ -162,8 +160,13 @@ namespace FieldInjector.Test
         public int testInt;
 
 #if !UNITY_EDITOR && !UNITY_2017_1_OR_NEWER
-        public TestMBSt(IntPtr ptr) : base(ptr) { }
-        static void Log(string s) => MelonLogger.Msg(s);
+
+        public TestMBSt(IntPtr ptr) : base(ptr)
+        {
+        }
+
+        private static void Log(string s) => MelonLogger.Msg(s);
+
 #else
     static void Log(string s) => Debug.Log(s);
 #endif

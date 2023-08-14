@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
-using ILCollections = Il2CppSystem.Collections.Generic;
 
 namespace FieldInjector.FieldSerialisers
 {

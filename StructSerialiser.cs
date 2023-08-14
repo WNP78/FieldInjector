@@ -4,7 +4,6 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using UnhollowerBaseLib.Runtime;
-using UnityEngine;
 using static FieldInjector.Util;
 using static MelonLoader.MelonLogger;
 using static UnhollowerBaseLib.IL2CPP;
@@ -70,7 +69,7 @@ namespace FieldInjector
             List<BlitField> blitFields = new List<BlitField>();
             List<SubStructField> subStructFields = new List<SubStructField>();
             List<PointerMarshalField> pointerMarshalFields = new List<PointerMarshalField>();
-            
+
             FieldInfo[] fields = t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             foreach (var field in fields)
             {
@@ -138,7 +137,7 @@ namespace FieldInjector
             }
         }
 
-        private unsafe static IntPtr GetPtrValue(IntPtr pp)
+        private static unsafe IntPtr GetPtrValue(IntPtr pp)
         {
             return *(IntPtr*)pp;
         }

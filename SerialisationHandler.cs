@@ -1,13 +1,9 @@
-﻿using MelonLoader;
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using UnhollowerBaseLib;
@@ -15,7 +11,6 @@ using UnhollowerBaseLib.Runtime;
 using UnhollowerBaseLib.Runtime.VersionSpecific.Class;
 using UnhollowerBaseLib.Runtime.VersionSpecific.MethodInfo;
 using UnhollowerRuntimeLib;
-using UnhollowerRuntimeLib.XrefScans;
 using UnityEngine;
 using static FieldInjector.Util;
 using static MelonLoader.MelonLogger;
@@ -118,7 +113,7 @@ namespace FieldInjector
             foreach (var tti in typesToInject)
             {
                 if (tti.IsValueType) { numStructs++; }
-                else {  numClasses++; }
+                else { numClasses++; }
             }
 
             Type[] classes = new Type[numClasses];
@@ -144,7 +139,7 @@ namespace FieldInjector
 
         #endregion Injection Entrypoint and Dependency processing
 
-        #region Main Serialiser
+        #region Fake Images / Tokens
 
         // unhollower assigns fake tokens descending by starting at -2 (il2cpp only uses positive tokens, so the all the negative numbers can be used by us safely
         // we used to use a publiciser to allocate them with unhollower's ones, so we decremented their counter
@@ -159,9 +154,9 @@ namespace FieldInjector
         private static bool _initImage;
         internal static Dictionary<Type, IntPtr> _injectedStructs = new Dictionary<Type, IntPtr>();
 
-        private static Action<Type, IntPtr> AddToClassFromNameDictionary = 
+        private static Action<Type, IntPtr> AddToClassFromNameDictionary =
             (Action<Type, IntPtr>)Delegate.CreateDelegate(typeof(Action<Type, IntPtr>), typeof(ClassInjector).GetMethod(
-                "AddToClassFromNameDictionary", 
+                "AddToClassFromNameDictionary",
                 BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static, Type.DefaultBinder,
                 new Type[] { typeof(Type), typeof(IntPtr) }, null));
 
@@ -169,7 +164,7 @@ namespace FieldInjector
 
         internal static void InitImage()
         {
-            if (_initImage) return; 
+            if (_initImage) return;
 
             // largely does a similar thing to unhollower
             var img = NewImage();
@@ -189,7 +184,6 @@ namespace FieldInjector
             _fakeImage = img.Pointer;
             _fakeAssembly = asm.Pointer;
             _initImage = true;
-
 
             // time for the hack to add our image to the script managers image list
             // struct injection won't work if it isn't in there
@@ -217,7 +211,7 @@ namespace FieldInjector
         {
             get
             {
-                if (! _initImage) InitImage();
+                if (!_initImage) InitImage();
                 return _fakeAssembly;
             }
         }
@@ -239,6 +233,10 @@ namespace FieldInjector
                 return _fakeTokenClasses;
             }
         }
+
+        #endregion Fake Images / Tokens
+
+        #region Main Serialiser
 
         private static IntPtr InjectStruct(Type type)
         {
@@ -788,13 +786,13 @@ namespace FieldInjector
         [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Ansi)]
         internal static extern IntPtr LoadLibrary([MarshalAs(UnmanagedType.LPStr)] string lpFileName);
 
-        delegate MyIl2CppClass* GetTypeInfoFromTypeDelegate(MyIl2CppType* type);
+        private delegate MyIl2CppClass* GetTypeInfoFromTypeDelegate(MyIl2CppType* type);
 
         private static GetTypeInfoFromTypeDelegate originalGetTypeInfoDelegate;
 
         private static bool _typeInfoPatched = false;
 
-        static unsafe MyIl2CppClass* GetTypeInfoFromTypePatch(MyIl2CppType* type)
+        private static unsafe MyIl2CppClass* GetTypeInfoFromTypePatch(MyIl2CppType* type)
         {
             if (type->type == Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE || type->type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS)
             {
@@ -834,7 +832,8 @@ namespace FieldInjector
             // Il2CppClass* MetadataCache::GetTypeInfoFromType(Il2CppType* type)
             Log($"jumptargets: {string.Join(", ", XrefScannerLowLevelCustom.JumpTargets(getClassOrElementClass).Select(p => ((long)p).ToString("X")))}", 5);
             var cacheGetTypeInfoFromType = (from tgt in XrefScannerLowLevelCustom.JumpTargets(getClassOrElementClass)
-                                            where tgt != classFromType select tgt).Single();
+                                            where tgt != classFromType
+                                            select tgt).Single();
             Log($"cacheGetTypeInfoFromType = 0x{(ulong)cacheGetTypeInfoFromType:X}", 4);
 
             // Il2CppClass* GlobalMetadata::GetTypeInfoFromType(Il2CppClass* type)
@@ -845,6 +844,6 @@ namespace FieldInjector
             originalGetTypeInfoDelegate = ClassInjector.Detour.Detour(metadataGetTypeInfoFromType, ourDel);
         }
 
-        #endregion Hook
+        #endregion Hook GetClassOrElementClass
     }
 }
