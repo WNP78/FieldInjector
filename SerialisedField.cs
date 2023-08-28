@@ -118,7 +118,7 @@ namespace FieldInjector
                 {
                     return (SerialisedField)Activator.CreateInstance(typeof(CustomStructField<>).MakeGenericType(fieldType), field);
                 }
-                else if (GetClassPointerForType(fieldType) != null)
+                else if (fieldType.IsEnum || GetClassPointerForType(fieldType) != null)
                 {
                     return new StructField(field);
                 }

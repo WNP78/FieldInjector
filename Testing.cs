@@ -8,6 +8,7 @@ using Logging = MelonLoader.MelonLogger;
 
 namespace FieldInjector.Test
 {
+#if DEBUG
     internal static class Testing
     {
         [DllImport("Kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
@@ -67,18 +68,18 @@ namespace FieldInjector.Test
                 stringList = new List<string>(new string[] { "alpha", "bravo", "charlie" }),
                 transformArray = new Transform[] { g1.transform, g1.transform },
                 objectList = new List<GameObject>(new GameObject[] { g1 }),
-                testString = "tabloid's real name"
+                testString = "tabloid's real name",
             };
             script.myStruct = c;
             script.testInt = 123;
-            Logging.Msg($"testInt: {script.testInt}");
-            script.myStruct.Debug();
+            script.testEnum1 = TestEnum.C;
+            script.vectors = new Vector3d[] { new Vector3d() { x = 1, y = 2, z = 3 }, new Vector3d() { x = 5, y = -1, z = 2 } };
+            script.Debug();
 
             Logging.Msg("Duplicating test object\n\n\n");
             var g2 = UnityEngine.Object.Instantiate(g1);
             Debug.Break();
-            g2.GetComponent<TestMBSt>().myStruct.Debug();
-            Logging.Msg($"testInt: {g2.GetComponent<TestMBSt>().testInt}");
+            g2.GetComponent<TestMBSt>().Debug();
             GameObject.Destroy(g1);
             GameObject.Destroy(g2);
 
@@ -154,10 +155,23 @@ namespace FieldInjector.Test
         }
     }
 
+    [Serializable]
+    internal struct Vector3d
+    {
+        public double x, y, z;
+
+        public override string ToString()
+        {
+            return $"{x},{y},{z}";
+        }
+    }
+
     internal class TestMBSt : MonoBehaviour
     {
         public TestStruct myStruct;
         public int testInt;
+        public TestEnum testEnum1;
+        public Vector3d[] vectors;
 
 #if !UNITY_EDITOR && !UNITY_2017_1_OR_NEWER
 
@@ -166,6 +180,14 @@ namespace FieldInjector.Test
         }
 
         private static void Log(string s) => MelonLogger.Msg(s);
+
+        public void Debug()
+        {
+            Log($"testInt: {this.testInt}");
+            Log($"testEnum1: {this.testEnum1}");
+            Log($"vectors: {(this.vectors == null ? "null" : string.Join(" ", this.vectors))}");
+            this.myStruct.Debug();
+        }
 
 #else
     static void Log(string s) => Debug.Log(s);
@@ -333,4 +355,5 @@ namespace FieldInjector.Test
         }
     }
     */
+#endif
 }

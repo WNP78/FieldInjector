@@ -16,5 +16,5 @@ using System.Runtime.InteropServices;
 // The following GUID is for the ID of the typelib if this project is exposed to COM.
 
 [assembly: Guid("82c7a0e0-36ec-4675-bb8c-ededa0f92dfa")]
-[assembly: MelonInfo(typeof(Mod), "FieldInjector", "2.0", author: "WNP78")]
+[assembly: MelonInfo(typeof(Mod), "FieldInjector", "2.0.1", author: "WNP78")]
 [assembly: MelonPriority(-100)]
