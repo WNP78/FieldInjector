@@ -2,7 +2,7 @@
 MelonLoader mod for BONELAB to inject classes into the IL2CPP runtime with fields and serialisation working. Originally for BONEWORKS, ported forwards to BONELAB. 
 
 ## For Players
-Releases on: [ThunderStore](https://bonelab.thunderstore.io/package/WNP78/FieldInjector/)
+Releases on: [Thunderstore](https://bonelab.thunderstore.io/package/WNP78/FieldInjector/)
 
 ## For Programmers
 
