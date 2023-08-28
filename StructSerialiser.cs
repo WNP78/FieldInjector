@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MelonLoader;
+using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -46,6 +47,7 @@ namespace FieldInjector
         }
 
         private delegate void DeserialiseDelegate(ref T obj, IntPtr src);
+        private delegate void SerialiseDelegate(ref T obj, IntPtr tgt);
 
         public Delegate MarshalFunction => this.GetMarshalFunction();
 
@@ -57,6 +59,8 @@ namespace FieldInjector
         private SubStructField[] subStructFields;
         private bool offsetsSet = false;
         private DeserialiseDelegate marshalFunction;
+        private SerialiseDelegate serialiserFunction;
+        private int nativeSize;
 
         public bool IsBlittable { get; private set; }
 
@@ -140,6 +144,17 @@ namespace FieldInjector
         private static unsafe IntPtr GetPtrValue(IntPtr pp)
         {
             return *(IntPtr*)pp;
+        }
+
+        private SerialiseDelegate GetSerialiseFunction()
+        {
+            if (!this.offsetsSet) { throw new NotSupportedException($"fields haven't been written yet for {typeof(T)}"); }
+            if (this.serialiserFunction != null) return this.serialiserFunction;
+
+            var obj = Expression.Parameter(typeof(T).MakeByRefType(), "obj");
+            var tgt = Expression.Parameter(typeof(IntPtr), "tgt");
+            this.serialiserFunction = Expression.Lambda<SerialiseDelegate>(this.GenerateSerialiser(obj, tgt), obj, tgt).Compile();
+            return this.serialiserFunction;
         }
 
         private DeserialiseDelegate GetMarshalFunction()
@@ -304,7 +319,9 @@ namespace FieldInjector
             klass->actualSize += (uint)addedSize;
             klass->instance_size += (uint)addedSize;
             klass->native_size += addedSize;
+
             klass->bitfield |= MyIl2CppClass.ClassFlags.size_inited;
+            this.nativeSize = addedSize;
         }
 
         public static IStructSerialiser GetSerialiser(Type t1)
@@ -321,6 +338,26 @@ namespace FieldInjector
                 res);
 
             return block;
+        }
+
+        public void DeserialiseArray(IntPtr nativeData, T[] tgt)
+        {
+            var marshalFunction = this.GetMarshalFunction();
+            for (int i = 0; i < tgt.Length; i++)
+            {
+                IntPtr dat = nativeData + (this.nativeSize * i);
+                marshalFunction(ref tgt[i], dat);
+            }
+        }
+
+        public void SerialiseArray(IntPtr nativeData, T[] src)
+        {
+            var func = this.GetSerialiseFunction();
+            for (int i = 0; i < src.Length; i++)
+            {
+                IntPtr dat = nativeData + (this.nativeSize * i);
+                func(ref src[i], dat);
+            }
         }
 
         public Expression GenerateSerialiser(Expression managedStruct, Expression targetPtr)

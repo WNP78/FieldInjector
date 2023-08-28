@@ -73,7 +73,7 @@ namespace FieldInjector.Test
             script.myStruct = c;
             script.testInt = 123;
             script.testEnum1 = TestEnum.C;
-            script.vectors = new Vector3d[] { new Vector3d() { x = 1, y = 2, z = 3 }, new Vector3d() { x = 5, y = -1, z = 2 } };
+            script.vectors = new Vector3d[] { new Vector3d() { i = -5, x = 1, y = 2, z = 3 }, new Vector3d() { i = -6, x = 4, y = 5, z = 6 } };
             script.Debug();
 
             Logging.Msg("Duplicating test object\n\n\n");
@@ -158,11 +158,13 @@ namespace FieldInjector.Test
     [Serializable]
     internal struct Vector3d
     {
+        [NonSerialized]
+        public double i;
         public double x, y, z;
 
         public override string ToString()
         {
-            return $"{x},{y},{z}";
+            return $"{i},{x},{y},{z}";
         }
     }
 

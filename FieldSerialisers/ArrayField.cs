@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using UnhollowerBaseLib;
@@ -96,14 +97,14 @@ namespace FieldInjector.FieldSerialisers
             var managedElementType = managedType.GetElementType();
             var cppElementType = cppArray.Type.BaseType.GetGenericArguments()[0];
 
-            if (cppElementType == managedElementType)
-            {
-                return Expression.Call(((Func<Il2CppArrayBase<float>, float[]>)ConvertArray).Method.GetGenericMethodDefinition().MakeGenericMethod(managedElementType), cppArray);
-            }
-            else if (managedElementType.IsValueType)
+            if (managedElementType.IsValueType)
             {
                 return Expression.Call(
                     ((Func<Il2CppStructArray<float>, float[]>)ConvertStructArray<float, float>).Method.GetGenericMethodDefinition().MakeGenericMethod(managedElementType, cppElementType), cppArray);
+            }
+            else if (cppElementType == managedElementType)
+            {
+                return Expression.Call(((Func<Il2CppArrayBase<float>, float[]>)ConvertArray).Method.GetGenericMethodDefinition().MakeGenericMethod(managedElementType), cppArray);
             }
 
             throw new NotImplementedException();
@@ -119,12 +120,24 @@ namespace FieldInjector.FieldSerialisers
         public static TM[] ConvertStructArray<TM, TC>(Il2CppStructArray<TC> array) where TM : unmanaged where TC : unmanaged
         {
             var res = new TM[array.Length];
-            fixed (TM* destPtr = res)
+
+            var ss = StructSerialiser<TM>.Cache;
+            if (ss == null)
             {
-                for (int i = 0; i < res.Length; i++)
+                Msg($"Deserialising array of {typeof(TM).Name} without serialiser");
+                fixed (TM* destPtr = res)
                 {
-                    *(TC*)(destPtr + i) = array[i];
+                    for (int i = 0; i < res.Length; i++)
+                    {
+                        *(TC*)(destPtr + i) = array[i];
+                    }
                 }
+            }
+            else
+            {
+                Msg($"Deserialising array of {typeof(TM).Name} with serialiser");
+                IntPtr dataBase = array.Pointer + (4 * IntPtr.Size);
+                ss.DeserialiseArray(dataBase, res);
             }
 
             return res;
@@ -134,12 +147,23 @@ namespace FieldInjector.FieldSerialisers
         {
             var res = new Il2CppStructArray<TC>(array.Length);
 
-            fixed (TM* srcPtr = array)
+            var ss = StructSerialiser<TM>.Cache;
+            if (ss == null)
             {
-                for (int i = 0; i < array.Length; i++)
+                Msg($"Serialising array of {typeof(TM).Name} without serialiser");
+                fixed (TM* srcPtr = array)
                 {
-                    res[i] = *(TC*)(srcPtr + i);
+                    for (int i = 0; i < array.Length; i++)
+                    {
+                        res[i] = *(TC*)(srcPtr + i);
+                    }
                 }
+            }
+            else
+            {
+                Msg($"Serialising array of {typeof(TM).Name} with serialiser");
+                IntPtr dataBase = res.Pointer + (4 * IntPtr.Size);
+                ss.SerialiseArray(dataBase, array);
             }
 
             return res;
