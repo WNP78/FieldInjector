@@ -98,7 +98,7 @@ namespace FieldInjector
                 if (!ct.IsValueType && ct.BaseType != null) CollectDependencies(ProcessType(ct.BaseType));
 
                 foreach (var type in ct
-                    .GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .GetFields(BindingFlags.Instance | BindingFlags.Public)
                     .Where(field => !field.IsNotSerialized)
                     .Select((field) => ProcessType(field.FieldType))
                     .Where(r => r != null))
@@ -401,7 +401,7 @@ namespace FieldInjector
             foreach (var type in structs)
             {
                 List<Type> list = null;
-                foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public))
                 {
                     if (field.IsNotSerialized) { continue; }
                     if (structs.Contains(field.FieldType))
