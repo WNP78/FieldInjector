@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Linq.Expressions;
 using System.Reflection;
-using UnhollowerBaseLib;
-using static UnhollowerBaseLib.IL2CPP;
+using Il2CppInterop.Runtime;
+using static Il2CppInterop.Runtime.IL2CPP;
 
 namespace FieldInjector.FieldSerialisers
 {

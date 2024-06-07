@@ -2,7 +2,7 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using static FieldInjector.Util;
-using static UnhollowerBaseLib.IL2CPP;
+using static Il2CppInterop.Runtime.IL2CPP;
 
 namespace FieldInjector.FieldSerialisers
 {

@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
-using static UnhollowerBaseLib.IL2CPP;
+using static Il2CppInterop.Runtime.IL2CPP;
 
 namespace FieldInjector.FieldSerialisers
 {

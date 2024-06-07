@@ -24,7 +24,7 @@ namespace FieldInjector.Test
             if (IsDebuggerPresent())
             {
                 Logging.Msg("Debug Break");
-                DebugBreak();
+                //DebugBreak();
             }
 
             Logging.Msg("Injecting test class");

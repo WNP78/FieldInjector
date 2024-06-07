@@ -3,12 +3,12 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Runtime.InteropServices;
 using System.Text;
-using UnhollowerBaseLib;
-using UnhollowerBaseLib.Runtime;
-using UnhollowerBaseLib.Runtime.VersionSpecific.Type;
+using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.Runtime;
+using Il2CppInterop.Runtime.Runtime.VersionSpecific.Type;
 using static MelonLoader.MelonLogger;
-using static UnhollowerBaseLib.IL2CPP;
-using static UnhollowerBaseLib.Runtime.UnityVersionHandler;
+using static Il2CppInterop.Runtime.IL2CPP;
+using static Il2CppInterop.Runtime.Runtime.UnityVersionHandler;
 
 namespace FieldInjector
 {

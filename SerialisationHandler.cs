@@ -6,15 +6,17 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
-using UnhollowerBaseLib;
-using UnhollowerBaseLib.Runtime;
-using UnhollowerBaseLib.Runtime.VersionSpecific.Class;
-using UnhollowerBaseLib.Runtime.VersionSpecific.MethodInfo;
-using UnhollowerRuntimeLib;
+using Il2CppInterop.Runtime.Runtime;
+using Il2CppInterop.Runtime.Runtime.VersionSpecific.Class;
+using Il2CppInterop.Runtime.Runtime.VersionSpecific.MethodInfo;
 using UnityEngine;
 using static FieldInjector.Util;
 using static MelonLoader.MelonLogger;
-using static UnhollowerBaseLib.Runtime.UnityVersionHandler;
+using static Il2CppInterop.Runtime.Runtime.UnityVersionHandler;
+using Il2CppInterop.Runtime.Injection;
+using Il2CppInterop.Runtime;
+using MelonLoader.NativeUtils;
+using System.Runtime.CompilerServices;
 
 namespace FieldInjector
 {
@@ -154,11 +156,7 @@ namespace FieldInjector
         private static bool _initImage;
         internal static Dictionary<Type, IntPtr> _injectedStructs = new Dictionary<Type, IntPtr>();
 
-        private static Action<Type, IntPtr> AddToClassFromNameDictionary =
-            (Action<Type, IntPtr>)Delegate.CreateDelegate(typeof(Action<Type, IntPtr>), typeof(ClassInjector).GetMethod(
-                "AddToClassFromNameDictionary",
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static, Type.DefaultBinder,
-                new Type[] { typeof(Type), typeof(IntPtr) }, null));
+        private static Action<Type, IntPtr> AddTypeToLookup = (Action<Type, IntPtr>)Delegate.CreateDelegate(typeof(Action<Type, IntPtr>), HarmonyLib.AccessTools.Method("Il2CppInterop.Runtime.Injection.InjectorHelpers:AddTypeToLookup", parameters: new Type[] { typeof(Type), typeof(IntPtr) }));
 
         private delegate IntPtr GetManagerFromContextDelegate(int index);
 
@@ -171,7 +169,7 @@ namespace FieldInjector
             var asm = NewAssembly();
             var name = Marshal.StringToHGlobalAnsi("InjectedStructs");
 
-            asm.Name = name;
+            asm.Name.Name = name;
             img.Assembly = asm.AssemblyPointer;
             img.Dynamic = 1;
             img.Name = name;
@@ -220,15 +218,7 @@ namespace FieldInjector
         {
             get
             {
-                if (_fakeTokenClasses == null)
-                {
-                    _fakeTokenClasses = typeof(ClassInjector).GetField("FakeTokenClasses", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) as ConcurrentDictionary<long, IntPtr>;
-                }
-
-                if (_fakeTokenClasses == null)
-                {
-                    throw new Exception("Can't find fake token classes dictionary");
-                }
+                _fakeTokenClasses ??= HarmonyLib.AccessTools.Field("Il2CppInterop.Runtime.Injection.InjectorHelpers:s_InjectedClasses")?.GetValue(null) as ConcurrentDictionary<long, IntPtr> ?? throw new Exception("Can't find fake token classes dictionary");
 
                 return _fakeTokenClasses;
             }
@@ -371,9 +361,9 @@ namespace FieldInjector
                 if (vtablePtr[i].method != null) Log($"copying vtable {Marshal.PtrToStringAnsi(Wrap(vtablePtr[i].method).Name)}", 5);
             }
 
-            AddToClassFromNameDictionary(type, (IntPtr)p);
+            AddTypeToLookup(type, (IntPtr)p);
             _injectedStructs[type] = (IntPtr)p;
-            RuntimeSpecificsStore.SetClassInfo((IntPtr)p, true, true);
+            RuntimeSpecificsStore.SetClassInfo((IntPtr)p, true);
             SetClassPointerForType(type, (IntPtr)p);
 
             return (IntPtr)p;
@@ -473,7 +463,10 @@ namespace FieldInjector
                 try
                 {
                     Log($"Initial injection for {t.Name}", 2);
-                    ClassInjector.RegisterTypeInIl2CppWithInterfaces(t, false, typeof(ISerializationCallbackReceiver));
+                    ClassInjector.RegisterTypeInIl2Cpp(t, new RegisterTypeOptions()
+                    {
+                        Interfaces = new Type[] { typeof(ISerializationCallbackReceiver) },
+                    });
 
                     Log($"Get ptr for {t.Name}", 3);
                     var klassPtr = (MyIl2CppClass*)GetClassPointerForType(t, bypassEnums: true);
@@ -786,12 +779,13 @@ namespace FieldInjector
         [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Ansi)]
         internal static extern IntPtr LoadLibrary([MarshalAs(UnmanagedType.LPStr)] string lpFileName);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate MyIl2CppClass* GetTypeInfoFromTypeDelegate(MyIl2CppType* type);
-
-        private static GetTypeInfoFromTypeDelegate originalGetTypeInfoDelegate;
+        private static NativeHook<GetTypeInfoFromTypeDelegate> getTypeInfoHook;
 
         private static bool _typeInfoPatched = false;
 
+        [UnmanagedCallersOnly(CallConvs = new Type[] { typeof(CallConvCdecl) })]
         private static unsafe MyIl2CppClass* GetTypeInfoFromTypePatch(MyIl2CppType* type)
         {
             if (type->type == Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE || type->type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS)
@@ -802,12 +796,12 @@ namespace FieldInjector
                 }
             }
 
-            while (originalGetTypeInfoDelegate == null)
+            while (getTypeInfoHook == null)
             {
                 Thread.Sleep(1);
             }
 
-            return originalGetTypeInfoDelegate(type);
+            return getTypeInfoHook.Trampoline(type);
         }
 
         private static void HookGetTypeInfo()
@@ -839,9 +833,11 @@ namespace FieldInjector
             // Il2CppClass* GlobalMetadata::GetTypeInfoFromType(Il2CppClass* type)
             var metadataGetTypeInfoFromType = XrefScannerLowLevelCustom.JumpTargets(cacheGetTypeInfoFromType).Single();
             Log($"metadataGetTypeInfoFromType = 0x{(ulong)metadataGetTypeInfoFromType:X}", 4);
-
-            GetTypeInfoFromTypeDelegate ourDel = GetTypeInfoFromTypePatch;
-            originalGetTypeInfoDelegate = ClassInjector.Detour.Detour(metadataGetTypeInfoFromType, ourDel);
+            // MyIl2CppClass* GetTypeInfoFromTypeDelegate(MyIl2CppType* type)
+            delegate* unmanaged[Cdecl]<MyIl2CppType*, MyIl2CppClass*> fp = &GetTypeInfoFromTypePatch;
+            getTypeInfoHook = new(metadataGetTypeInfoFromType, (IntPtr)fp);
+            getTypeInfoHook.Attach();
+            
         }
 
         #endregion Hook GetClassOrElementClass

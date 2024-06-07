@@ -31,4 +31,4 @@ This is what this mod is used for, and it is very simple:
 ```cs
 FieldInjector.SerialisationHandler.Inject<MyScript>();
 ```
-in the `OnApplicationStart` method is all that is needed. Do not register the class in Il2Cpp with MelonLoader or UnhollowerBaseLib - this mod does that itself and it won't be able to inject the class with fields if it's already injected without fields. Makers of frameworks that load code should consider registering fields for loaded behaviours automatically.
+in the `OnApplicationStart` method is all that is needed. Do not register the class in Il2Cpp with MelonLoader - this mod does that itself and it won't be able to inject the class with fields if it's already injected without fields. Makers of frameworks that load code should consider registering fields for loaded behaviours automatically.

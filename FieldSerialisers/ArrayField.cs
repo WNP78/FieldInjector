@@ -1,11 +1,10 @@
 ﻿using System;
-using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using UnhollowerBaseLib;
 using static FieldInjector.Util;
 using static MelonLoader.MelonLogger;
-using static UnhollowerBaseLib.IL2CPP;
+using static Il2CppInterop.Runtime.IL2CPP;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 
 namespace FieldInjector.FieldSerialisers
 {

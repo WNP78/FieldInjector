@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using System.Text;
-using UnhollowerBaseLib.Runtime;
+using Il2CppInterop.Runtime.Runtime;
 
 namespace FieldInjector
 {
