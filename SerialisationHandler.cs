@@ -382,6 +382,10 @@ namespace FieldInjector
 
         private static void InjectBatch(Type[] classes, Type[] structs)
         {
+            // this fixes a crash that used to just occur with injected structs
+            // but now it seems to be needed for some classes too
+            HookGetTypeInfo();
+
             injection.Clear();
             int n = classes.Length;
             int m = structs.Length;
@@ -806,7 +810,7 @@ namespace FieldInjector
 
         private static void HookGetTypeInfo()
         {
-            if (_typeInfoPatched) return;
+            if (_typeInfoPatched || FakeTokenClasses == null) return;
             _typeInfoPatched = true;
 
             Log("Patching get type from info", 3);
